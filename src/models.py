@@ -33,6 +33,12 @@ class SengkangConfig:
 
 
 @dataclass(frozen=True)
+class OptimizerConfig:
+    max_pola: int = 8
+    batasi_pola: bool = True
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     """Config proyek — immutable setelah load. Frozen disengaja.
 
@@ -51,6 +57,7 @@ class ProjectConfig:
     bend_factor: int
     unit_weight: dict                # dia -> kg/m
     sengkang_cfg: SengkangConfig
+    optimizer: OptimizerConfig
     warnings: list = field(default_factory=list)
 
 
@@ -90,3 +97,39 @@ class ElemenInput:
     bentang_bersih_mm: int
     jumlah: int
     lokasi: str = ""
+
+
+# ── Cutting stock (F1) ──────────────────────────────────────
+@dataclass(frozen=True)
+class Cut:
+    """Satu kebutuhan potongan: diameter + panjang + jumlah."""
+    dia: int
+    panjang_mm: int
+    jumlah: int
+
+
+@dataclass(frozen=True)
+class Pattern:
+    """Satu pola potong — multiset potongan yang diulang beberapa batang."""
+    potongan: tuple[int, ...]      # panjang tiap potongan, urut
+    frekuensi: int                 # berapa batang dipotong dengan pola ini
+    sisa_mm: int                   # sisa per batang
+    reusable: bool                 # sisa >= sisa_min_simpan_mm
+
+
+@dataclass(frozen=True)
+class OptimizeResult:
+    dia: int
+    patterns: list[Pattern]
+    total_batang: int
+    total_panjang_stok_mm: int     # total_batang × panjang_batang
+    total_panjang_terpakai_mm: int # jumlah semua potongan
+    total_kerf_mm: int
+    total_sisa_mm: int
+    sisa_reusable_mm: int
+    waste_pct: float
+    waste_kotor_pct: float
+    # metrik pembatasan pola
+    pola_sebelum_batasi: int
+    pola_sesudah_batasi: int
+    waste_pct_tanpa_batasi: float

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import yaml
 
-from models import (ConfigError, ElementTemplate, ProjectConfig,
-                    SengkangConfig, SourceInfo, StockConfig,
+from models import (ConfigError, ElementTemplate, OptimizerConfig,
+                    ProjectConfig, SengkangConfig, SourceInfo, StockConfig,
                     TemplateSengkang, TemplateTulangan)
 
 ALLOWED_ALOKASI_TIPES = ("balok",)          # kolom/plat menyusul (F5/F7)
@@ -144,10 +144,24 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
     sengkang_cfg = SengkangConfig(zona_tumpuan_faktor=faktor,
                                   jarak_sengkang_pertama_mm=jarak_pertama)
 
+    # ── optimizer ──
+    opt_raw = data.get("optimizer") or {}
+    try:
+        max_pola = _norm_int(opt_raw.get("max_pola", 8), "max_pola", "optimizer")
+    except ConfigError as e:
+        errors.append(str(e))
+        max_pola = 8
+    batasi = opt_raw.get("batasi_pola", True)
+    if not isinstance(batasi, bool):
+        errors.append(f"optimizer.batasi_pola harus boolean, dapat {batasi!r}")
+        batasi = True
+    optimizer_cfg = OptimizerConfig(max_pola=max_pola, batasi_pola=batasi)
+
     return ProjectConfig(
         nama=nama, kode=kode, sumber=sumber, stok=stok, cover=cover,
         ld=ld, lap=lap, hook_tail=hook_tail, bend_factor=bend_factor,
-        unit_weight=uw, sengkang_cfg=sengkang_cfg, warnings=warnings)
+        unit_weight=uw, sengkang_cfg=sengkang_cfg, warnings=warnings,
+        optimizer=optimizer_cfg)
 
 
 def _load_dia_dict(raw, path, errors) -> dict:

@@ -71,3 +71,8 @@ sengkang:
   zona_tumpuan_faktor: 0.25     # panjang zona tumpuan = faktor × bentang bersih
                                 # diukur dari tiap muka tumpuan
   jarak_sengkang_pertama_mm: 50 # jarak sengkang pertama dari muka tumpuan
+
+# ── Optimizer potong ───────────────────────────────────────
+optimizer:
+  max_pola: 8                    # batas jumlah pola potong berbeda (default 8)
+  batasi_pola: true              # false = lewati pembatasan (utk perbandingan)

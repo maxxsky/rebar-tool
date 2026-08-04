@@ -1,0 +1,92 @@
+"""Models — dataclass immutable utk seluruh pipeline rebar-tool.
+
+Semua panjang internal dalam mm integer. Nilai teknis TIDAK pernah
+hardcoded — datang dari ProjectConfig yang diisi dari config YAML.
+"""
+
+from dataclasses import dataclass, field
+
+
+class ConfigError(Exception):
+    """Error validasi config — fail loud, tidak ada fallback diam-diam."""
+
+
+@dataclass(frozen=True)
+class SourceInfo:
+    dokumen: str
+    revisi: str
+    tanggal: str
+    catatan: str = ""
+
+
+@dataclass(frozen=True)
+class StockConfig:
+    panjang_batang_mm: int
+    kerf_mm: int
+    sisa_min_simpan_mm: int
+
+
+@dataclass(frozen=True)
+class SengkangConfig:
+    zona_tumpuan_faktor: float
+    jarak_sengkang_pertama_mm: int
+
+
+@dataclass(frozen=True)
+class ProjectConfig:
+    """Config proyek — immutable setelah load. Frozen disengaja.
+
+    Kalau ada kode yang butuh mengubah nilai config saat runtime,
+    itu tanda nilai tsb seharusnya parameter fungsi, bukan config.
+    """
+
+    nama: str
+    kode: str
+    sumber: SourceInfo
+    stok: StockConfig
+    cover: dict                      # 'balok' | 'kolom' | 'plat' -> mm
+    ld: dict                         # dia -> mm
+    lap: dict                        # dia -> mm
+    hook_tail: dict                  # sudut -> dia -> mm
+    bend_factor: int
+    unit_weight: dict                # dia -> kg/m
+    sengkang_cfg: SengkangConfig
+    warnings: list = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TemplateTulangan:
+    posisi: str
+    dia: int
+    jumlah: int
+    tumpuan_kedua_ujung: bool = True
+
+
+@dataclass(frozen=True)
+class TemplateSengkang:
+    dia: int
+    jarak_tumpuan_mm: int
+    jarak_lapangan_mm: int
+    kaki: int
+    hook_sudut: int
+
+
+@dataclass(frozen=True)
+class ElementTemplate:
+    """Satu template tipe elemen (misal balok.B1)."""
+    nama: str
+    tipe: str
+    deskripsi: str
+    b_mm: int
+    h_mm: int
+    tulangan: tuple[TemplateTulangan, ...]
+    sengkang: TemplateSengkang
+
+
+# ── Elemen input (F2+) ──────────────────────────────────────
+@dataclass(frozen=True)
+class ElemenInput:
+    tipe: str
+    bentang_bersih_mm: int
+    jumlah: int
+    lokasi: str = ""

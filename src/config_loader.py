@@ -7,13 +7,14 @@ Aturan project:
 - Config immutable setelah load (frozen dataclass).
 """
 
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 
-from models import (ConfigError, ElementTemplate, OptimizerConfig,
-                    ProjectConfig, SengkangConfig, SourceInfo, StockConfig,
-                    TemplateSengkang, TemplateTulangan)
+from models import ConfigError, ElementTemplate, OptimizerConfig, \
+    ProjectConfig, SengkangConfig, SourceInfo, StockConfig, TOOL_VERSION, \
+    TemplateSengkang, TemplateTulangan
 
 ALLOWED_ALOKASI_TIPES = ("balok",)          # kolom/plat menyusul (F5/F7)
 ALLOWED_SENGKANG_HOOK = (90, 135)
@@ -219,6 +220,8 @@ def load_templates(path) -> dict[str, ElementTemplate]:
     errors: list[str] = []
     templates: dict[str, ElementTemplate] = {}
     for tipe, items in data.items():
+        if tipe == "_meta":
+            continue  # metadata file (F3.6) — bukan template elemen
         if tipe not in ALLOWED_ALOKASI_TIPES:
             errors.append(f"template.{tipe}: tipe elemen '{tipe}' belum didukung "
                           f"(hanya: {', '.join(ALLOWED_ALOKASI_TIPES)})")
@@ -353,3 +356,86 @@ def load_all(config_dir) -> tuple[ProjectConfig, dict[str, ElementTemplate]]:
             "Config tidak lengkap.\n\n" + "\n\n".join(errors) +
             "\n\nPerbaiki config lalu jalankan ulang.")
     return cfg, templates
+
+
+# ── multi-proyek (F3.6) ────────────────────────────────────
+# Struktur baru:
+#   config/projects/{kode}.yaml     — nilai teknis per proyek
+#   config/templates/{kode}.yaml    — template elemen per proyek
+#   config/project.yaml             — DEPRECATED, dipakai test lama & migrasi
+
+
+def load_project(projects_dir, kode) -> tuple[ProjectConfig, dict[str, ElementTemplate]]:
+    """Load satu proyek (config + templates) dengan validasi silang.
+
+    Raises ConfigError kalau proyek tidak ada atau config tidak lengkap.
+    """
+    projects_dir = Path(projects_dir)
+    cfg = load_project_config(projects_dir / "projects" / f"{kode}.yaml")
+    templates = load_templates(projects_dir / "templates" / f"{kode}.yaml")
+
+    errors: list[str] = []
+    validate_config_templates(cfg, templates, errors)
+    if errors:
+        raise ConfigError(
+            f"Proyek '{kode}' tidak lengkap.\n\n" + "\n\n".join(errors) +
+            "\n\nPerbaiki config lalu jalankan ulang.")
+    return cfg, templates
+
+
+def list_projects(projects_dir) -> list[dict]:
+    """Daftar proyek: kode, nama, sumber, jumlah template."""
+    projects_dir = Path(projects_dir)
+    out = []
+    if not (projects_dir / "projects").exists():
+        return out
+    for p in sorted((projects_dir / "projects").glob("*.yaml")):
+        kode = p.stem
+        try:
+            cfg, templates = load_project(projects_dir, kode)
+        except ConfigError:
+            continue
+        out.append({
+            "kode": kode,
+            "nama": cfg.nama,
+            "sumber": f"{cfg.sumber.dokumen} {cfg.sumber.revisi} "
+                      f"({cfg.sumber.tanggal})",
+            "jumlah_template": len(templates),
+        })
+    return out
+
+
+def migrate_legacy(config_dir):
+    """Migrasi config/project.yaml → config/projects/{kode}.yaml sekali.
+
+    Dipanggil saat config/projects/ kosong. File lama TIDAK dihapus.
+    """
+    config_dir = Path(config_dir)
+    proj_file = config_dir / "project.yaml"
+    tpl_file = config_dir / "templates.yaml"
+    if not proj_file.exists():
+        return False
+    (config_dir / "projects").mkdir(exist_ok=True)
+    (config_dir / "templates").mkdir(exist_ok=True)
+    if any((config_dir / "projects").glob("*.yaml")):
+        return False  # sudah pernah migrasi / sudah ada proyek
+
+    # baca kode dari file lama
+    import yaml
+    data = yaml.safe_load(proj_file.read_text())
+    kode = str((data.get("proyek") or {}).get("kode", "PRJ-001"))
+    if not kode or not all(c.isalnum() or c in "_-" for c in kode):
+        kode = "PRJ-001"
+
+    ts = datetime.utcnow().replace(microsecond=0).isoformat() + "+00:00"
+    meta_block = (
+        "_meta:\n"
+        f"  dibuat_via: migrasi\n"
+        f"  dibuat_pada: {ts}\n"
+        f"  tool_version: {TOOL_VERSION}\n"
+    )
+    proj_dst = config_dir / "projects" / f"{kode}.yaml"
+    proj_dst.write_text(meta_block + proj_file.read_text())
+    tpl_dst = config_dir / "templates" / f"{kode}.yaml"
+    tpl_dst.write_text(meta_block + tpl_file.read_text())
+    return True

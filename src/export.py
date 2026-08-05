@@ -13,9 +13,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from models import OptimizeResult, ProjectConfig
-
-TOOL_VERSION = "0.1.0"
+from models import OptimizeResult, ProjectConfig, TOOL_VERSION
 
 # warna
 WARN_FILL = PatternFill("solid", fgColor="FFF2CC")   # kuning warning

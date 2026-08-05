@@ -6,6 +6,8 @@ hardcoded — datang dari ProjectConfig yang diisi dari config YAML.
 
 from dataclasses import dataclass, field
 
+TOOL_VERSION = "0.1.0"
+
 
 class ConfigError(Exception):
     """Error validasi config — fail loud, tidak ada fallback diam-diam."""

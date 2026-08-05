@@ -18,14 +18,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from bbs import agregasi, generate_bbs          # noqa: E402
-from config_loader import load_all              # noqa: E402
+from config_loader import (load_all, load_project, list_projects,      # noqa: E402
+                           migrate_legacy)
 from export import generate_excel               # noqa: E402
 from models import (ConfigError, Cut, ElemenInput, InfeasiblePatternError,
-                    LengthExceedsStockError)    # noqa: E402
+                    LengthExceedsStockError, TOOL_VERSION)   # noqa: E402
 from optimizer import optimize_all              # noqa: E402
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
+
+CONFIG_DIR = ROOT / "config"
+
+# migrasi config lama → projects/ sekali (F3.6 §7)
+migrate_legacy(CONFIG_DIR)
 
 
 # ── helpers ────────────────────────────────────────────────
@@ -191,6 +197,178 @@ def index():
     return render_template("index.html")
 
 
+# ── PROJECT SETUP (F3.6) ───────────────────────────────────
+def _meta_yaml():
+    from datetime import datetime
+    ts = datetime.now().astimezone().replace(microsecond=0).isoformat()
+    return (f"_meta:\n  dibuat_via: web\n  dibuat_pada: {ts}\n"
+            f"  tool_version: {TOOL_VERSION}\n")
+
+
+def _valid_kode(kode):
+    return bool(kode) and all(c.isalnum() or c in "_-" for c in kode)
+
+
+def _simpan_proyek_baru(payload, arsip_lama=False):
+    """Validasi via loader (tempfile) lalu tulis final. Returns (kode, msg)."""
+    import tempfile
+    import yaml
+    kode = str(payload.get("kode", "")).strip()
+    if not _valid_kode(kode):
+        raise ConfigError(
+            f"Kode '{kode}' tidak valid. Gunakan hanya A-Z, a-z, 0-9, _ atau -.")
+    proj_path = CONFIG_DIR / "projects" / f"{kode}.yaml"
+    tpl_path = CONFIG_DIR / "templates" / f"{kode}.yaml"
+
+    if proj_path.exists():
+        if not arsip_lama:
+            raise ConfigDuplicate(kode)
+        # arsipkan file lama
+        arsip = CONFIG_DIR / "projects" / "_arsip"
+        arsip.mkdir(exist_ok=True)
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if proj_path.exists():
+            proj_path.rename(arsip / f"{kode}_{ts}.yaml")
+        if tpl_path.exists():
+            tpl_arsip = CONFIG_DIR / "templates" / "_arsip"
+            tpl_arsip.mkdir(exist_ok=True)
+            tpl_path.rename(tpl_arsip / f"{kode}_{ts}.yaml")
+
+    # validasi via tempfile → loader (satu sumber kebenaran)
+    config_yaml = yaml.safe_dump(payload["config"], allow_unicode=True)
+    templates_yaml = yaml.safe_dump(payload["templates"], allow_unicode=True)
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        (td / "project.yaml").write_text(config_yaml)
+        (td / "templates.yaml").write_text(templates_yaml)
+        cfg, tpls = load_all(td)  # ConfigError → ditangkap caller
+
+    (CONFIG_DIR / "projects").mkdir(exist_ok=True)
+    (CONFIG_DIR / "templates").mkdir(exist_ok=True)
+    proj_path.write_text(_meta_yaml() + config_yaml)
+    tpl_path.write_text(_meta_yaml() + templates_yaml)
+    return kode
+
+
+class ConfigDuplicate(Exception):
+    def __init__(self, kode):
+        super().__init__(f"Proyek '{kode}' sudah ada.")
+        self.kode = kode
+
+
+def _signature_teknis(payload):
+    """Nilai teknis dari gambar — dipakai deteksi 'revisi wajib berubah'."""
+    cfg = payload["config"]
+    return {
+        "cover": cfg.get("selimut_beton_mm", {}),
+        "ld": cfg.get("panjang_penyaluran_mm", {}),
+        "lap": cfg.get("lap_splice_mm", {}),
+        "hook": cfg.get("hook", {}),
+        "sengkang": cfg.get("sengkang", {}),
+        "templates": payload["templates"],
+    }
+
+
+def _signature_teknis_dari_file(kode):
+    """Signature dari file existing — load + dump ulang ke bentuk compare."""
+    import yaml
+    p = CONFIG_DIR / "projects" / f"{kode}.yaml"
+    t = CONFIG_DIR / "templates" / f"{kode}.yaml"
+    if not p.exists() or not t.exists():
+        return None
+    cfg_d = yaml.safe_load(p.read_text())
+    tpl_d = yaml.safe_load(t.read_text())
+    cfg_d.pop("_meta", None)
+    tpl_d.pop("_meta", None)
+    return {"cover": cfg_d.get("selimut_beton_mm", {}),
+            "ld": cfg_d.get("panjang_penyaluran_mm", {}),
+            "lap": cfg_d.get("lap_splice_mm", {}),
+            "hook": cfg_d.get("hook", {}),
+            "sengkang": cfg_d.get("sengkang", {}),
+            "templates": tpl_d}
+
+
+@app.get("/api/projects")
+def api_projects():
+    return jsonify({"ok": True, "projects": list_projects(CONFIG_DIR)})
+
+
+@app.get("/api/projects/<kode>")
+def api_project_get(kode):
+    p = CONFIG_DIR / "projects" / f"{kode}.yaml"
+    t = CONFIG_DIR / "templates" / f"{kode}.yaml"
+    if not p.exists() or not t.exists():
+        return jsonify({"ok": False, "error": f"Proyek '{kode}' tidak ada."}), 404
+    import yaml
+    cfg_d = yaml.safe_load(p.read_text())
+    tpl_d = yaml.safe_load(t.read_text())
+    cfg_d.pop("_meta", None)
+    tpl_d.pop("_meta", None)
+    return jsonify({"ok": True, "kode": kode,
+                    "config": cfg_d, "templates": tpl_d})
+
+
+@app.post("/api/projects")
+def api_project_create():
+    data = request.get_json(force=True) or {}
+    try:
+        kode = _simpan_proyek_baru(data)
+    except ConfigDuplicate as e:
+        return jsonify({"ok": False, "error": str(e),
+                        "duplicate": True, "kode": e.kode}), 409
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "kode": kode}), 201
+
+
+@app.put("/api/projects/<kode>")
+def api_project_update(kode):
+    data = request.get_json(force=True) or {}
+    new_kode = str(data.get("kode", kode))
+    # edit: kode harus sama dengan path
+    if new_kode != kode:
+        return jsonify({"ok": False,
+                        "error": "Kode tidak bisa diubah lewat edit."}), 400
+    old_sig = _signature_teknis_dari_file(kode)
+    if old_sig is None:
+        return jsonify({"ok": False, "error": f"Proyek '{kode}' tidak ada."}), 404
+    new_sig = _signature_teknis(data)
+    if new_sig != old_sig:
+        # nilai teknis berubah → revisi wajib berbeda
+        old_rev = _revisi_dari_file(kode)
+        new_rev = str(data["config"].get("sumber", {}).get("revisi", "")).strip()
+        if old_rev and new_rev == old_rev:
+            return jsonify({"ok": False,
+                            "error": "Nilai teknis berubah tapi revisi gambar masih "
+                                     "sama. Kalau ini koreksi salah ketik, ubah "
+                                     "catatan sumber. Kalau gambar memang direvisi, "
+                                     "perbarui field revisi."}), 400
+    try:
+        _simpan_proyek_baru(data, arsip_lama=True)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "kode": kode})
+
+
+def _revisi_dari_file(kode):
+    import yaml
+    p = CONFIG_DIR / "projects" / f"{kode}.yaml"
+    if not p.exists():
+        return ""
+    d = yaml.safe_load(p.read_text())
+    return str((d.get("sumber") or {}).get("revisi", "")).strip()
+
+
+@app.get("/api/projects/<kode>/yaml")
+def api_project_yaml(kode):
+    p = CONFIG_DIR / "projects" / f"{kode}.yaml"
+    if not p.exists():
+        return jsonify({"ok": False, "error": f"Proyek '{kode}' tidak ada."}), 404
+    return send_file(p, as_attachment=True, download_name=f"{kode}.yaml",
+                     mimetype="text/yaml")
+
+
 @app.get("/api/config")
 def api_config():
     cfg, templates = load_all(ROOT / "config")
@@ -198,15 +376,26 @@ def api_config():
                     "templates": _templates_dict(templates)})
 
 
+def _load_config(kode=None):
+    """Load config — proyek by kode (F3.6), fallback legacy kalau kode kosong."""
+    if kode:
+        return load_project(CONFIG_DIR, kode)
+    return load_all(CONFIG_DIR)
+
+
 @app.post("/api/hitung")
 def api_hitung():
     data = request.get_json(force=True) or {}
     rows = data.get("elemen", [])
     override = data.get("override", {}) or {}
+    kode = data.get("kode") or ""
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
 
-    cfg, templates = load_all(ROOT / "config")
+    try:
+        cfg, templates = _load_config(kode)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     elemen, errors = _baca_elemen_json(rows)
     if errors:
         return jsonify({"ok": False, "error": "\n".join(errors)}), 400
@@ -249,10 +438,14 @@ def api_export():
     data = request.get_json(force=True) or {}
     rows = data.get("elemen", [])
     override = data.get("override", {}) or {}
+    kode = data.get("kode") or ""
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
 
-    cfg, templates = load_all(ROOT / "config")
+    try:
+        cfg, templates = _load_config(kode)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     elemen, errors = _baca_elemen_json(rows)
     if errors:
         return jsonify({"ok": False, "error": "\n".join(errors)}), 400

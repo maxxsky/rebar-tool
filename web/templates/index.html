@@ -9,11 +9,20 @@
 <body>
 <div id="warnBanner"></div>
 
+<div class="topbar">
+  <div class="brand">Rebar BBS <span class="sub">verifikasi F4</span></div>
+  <div class="projbar">
+    <select id="projSelect" class="proj-select">
+      <option value="">— pilih proyek —</option>
+    </select>
+    <span id="projLabel" class="proj-label"></span>
+    <button id="btnNewProj" class="btn">+ Proyek baru</button>
+    <button id="btnEditProj" class="btn" title="edit config proyek aktif">✎ Edit</button>
+  </div>
+</div>
+
 <div class="layout">
   <div class="col-left">
-    <h1>Rebar BBS</h1>
-    <div class="sub">verifikasi F4 · config dari <code>config/</code></div>
-
     <div class="panel">
       <div class="panel-title">ELEMEN</div>
       <div id="rowHead" class="row-head">
@@ -55,6 +64,29 @@
     </div>
     <div id="tab-bbs" class="tab-body"></div>
     <div id="tab-pola" class="tab-body" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Wizard proyek -->
+<div id="wizard" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span id="wizTitle">Proyek baru</span>
+      <button id="wizClose" class="del">✕</button>
+    </div>
+    <div class="steps">
+      <span class="step active" data-s="1">1 Identitas</span>
+      <span class="step" data-s="2">2 Stok & Cover</span>
+      <span class="step" data-s="3">3 Diameter</span>
+      <span class="step" data-s="4">4 Sengkang</span>
+      <span class="step" data-s="5">5 Template</span>
+    </div>
+    <div id="wizBody" class="modal-body"></div>
+    <div class="modal-foot">
+      <button id="wizPrev" class="btn">← Kembali</button>
+      <button id="wizNext" class="btn primary">Lanjut →</button>
+      <button id="wizSave" class="btn primary" style="display:none">Simpan</button>
+    </div>
   </div>
 </div>
 

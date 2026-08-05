@@ -5,3 +5,6 @@ __pycache__/
 output/
 input/*.xlsx
 !input/.gitkeep
+# arsip revisi config — runtime, jangan masuk repo
+config/projects/_arsip/
+config/templates/_arsip/

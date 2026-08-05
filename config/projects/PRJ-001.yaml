@@ -1,0 +1,87 @@
+_meta:
+  dibuat_via: migrasi
+  dibuat_pada: 2026-08-05T04:01:57+00:00
+  tool_version: 0.1.0
+# ── Identitas & traceability ───────────────────────────────
+proyek:
+  nama: "Nama Proyek"
+  kode: "PRJ-001"
+
+sumber:
+  dokumen: "Gambar Struktur GS-01"
+  revisi: "Rev.3"
+  tanggal: "2026-05-12"
+  catatan: "Nilai Ld & lap diambil dari tabel notes GS-01 sheet 2"
+
+# ── Stok material ──────────────────────────────────────────
+stok:
+  panjang_batang_mm: 12000
+  kerf_mm: 3                    # lebar mata potong
+  sisa_min_simpan_mm: 1000      # sisa >= nilai ini dicatat reusable
+
+# ── Selimut beton (mm) ─────────────────────────────────────
+selimut_beton_mm:
+  balok: 40
+  kolom: 40
+  plat: 20
+
+# ── Panjang penyaluran / development length (mm) ──────────
+# Per diameter. Diambil dari tabel gambar.
+# NOTE: angka di sini PLACEHOLDER — diisi owner dari gambar proyek.
+panjang_penyaluran_mm:
+  10: 400
+  13: 520
+  16: 640
+  19: 760
+  22: 880
+  25: 1000
+
+# ── Panjang sambungan lewatan / lap splice (mm) ───────────
+# BELUM AKTIF (F6). Fase awal boleh absen.
+lap_splice_mm:
+  10: 520
+  13: 680
+  16: 830
+  19: 990
+  22: 1140
+  25: 1300
+
+# ── Hook / bengkokan ──────────────────────────────────────
+hook:
+  # panjang ekor (tail) per sudut, per diameter, mm
+  tail_135_mm:
+    10: 80
+    13: 100
+    16: 130
+  tail_90_mm:
+    10: 120
+    13: 160
+    16: 190
+  # faktor diameter bengkokan dalam (kelipatan d)
+  diameter_bengkok_faktor: 4
+  # koreksi bengkokan — OFF sampai terverifikasi ke BBS asli (F4, spec 02 §3.1)
+  koreksi_bengkokan_aktif: false
+
+# ── Unit weight (kg/m) ────────────────────────────────────
+# Konstanta fisik, boleh default tapi tetap override-able
+unit_weight_kg_per_m:
+  10: 0.617
+  13: 1.042
+  16: 1.578
+  19: 2.226
+  22: 2.984
+  25: 3.853
+
+# ── Zonasi sengkang ───────────────────────────────────────
+sengkang:
+  zona_tumpuan_faktor: 0.25     # panjang zona tumpuan = faktor × bentang bersih
+                                # diukur dari tiap muka tumpuan
+  jarak_sengkang_pertama_mm: 50 # jarak sengkang pertama dari muka tumpuan
+  metode_hitung: "kontinyu"     # "kontinyu" (default) | "per_zona" — spec 02 §4.3
+
+# ── Optimizer potong ───────────────────────────────────────
+optimizer:
+  max_pola: 8                    # PATCH-01: hanya pelaporan — lihat batasi_pola
+  batasi_pola: false             # PATCH-01: pembatasan pola DIHAPUS — true ditolak loader.
+                                 # Pola 'SISA/CAMPURAN' tidak bisa dieksekusi & batang
+                                 # tidak terwakili. Output pola panjang tapi benar.

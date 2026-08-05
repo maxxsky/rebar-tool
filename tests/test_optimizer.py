@@ -110,6 +110,29 @@ def test_kasus_e_potongan_lebih_dari_stok():
         optimize([_cut(10, 13000, 1)], _cfg())
 
 
+def test_patch01a_potongan_panjang_bukan_di_urutan_pertama():
+    """Cek > stok harus lihat max, bukan elemen pertama.
+
+    Regresi PATCH-01: sorting pindah ke _ffd(), cek tertinggal di pieces[0].
+    """
+    from models import InfeasiblePatternError
+    cuts = [_cut(13, 1000, 1), _cut(13, 13000, 1)]
+    with pytest.raises(ValueError) as e:
+        optimize(cuts, _cfg())
+    assert not isinstance(e.value, InfeasiblePatternError), (
+        "harus ValueError (salah input), bukan InfeasiblePatternError "
+        "(bug internal)")
+
+
+def test_patch01a_potongan_panjang_di_tengah_list():
+    """13000 di tengah — pieces[0] kecil, max yang besar."""
+    from models import InfeasiblePatternError
+    cuts = [_cut(13, 500, 1), _cut(13, 13000, 1), _cut(13, 700, 1)]
+    with pytest.raises(ValueError) as e:
+        optimize(cuts, _cfg())
+    assert not isinstance(e.value, InfeasiblePatternError)
+
+
 # ── F — PATCH-01: pembatasan pola dihapus — invariant kelayakan ──
 def test_patch01_semua_pola_layak_dieksekusi():
     """Kasus yang gagal sebelum patch: pola 'SISA/CAMPURAN' 200.093 mm."""

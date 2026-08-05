@@ -34,9 +34,9 @@ def optimize(cuts: list[Cut], cfg: ProjectConfig) -> OptimizeResult:
     for c in cuts:
         pieces.extend([c.panjang_mm] * c.jumlah)
 
-    if pieces and pieces[0] > stock:
+    if pieces and max(pieces) > stock:
         raise ValueError(
-            f"Potongan {pieces[0]} mm > batang stok {stock} mm "
+            f"Potongan {max(pieces)} mm > batang stok {stock} mm "
             f"(diameter {dia})")
 
     # 2. First fit decreasing

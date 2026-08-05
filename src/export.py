@@ -80,15 +80,22 @@ def _agregat_berat_per_dia(cuts, cfg):
 
 def generate_excel(cfg: ProjectConfig, elemen_list, cuts_bbs,
                    hasil_opt: dict[int, OptimizeResult], config_dir: Path,
-                   out_path: Path) -> Path:
-    """cuts_bbs = daftar Cut dari generate_bbs (per bar mark, sebelum agregasi)."""
+                   out_path: Path, override_info=None) -> Path:
+    """cuts_bbs = daftar Cut dari generate_bbs (per bar mark, sebelum agregasi).
+    override_info: list[str] perubahan config akibat 'Pakai sekali' — ditulis
+    sebagai peringatan di header tiap sheet (PATCH-02 §1.3)."""
     warnings = list(cfg.warnings)
+    extra_lines = list(override_info or [])
+    if override_info:
+        extra_lines.insert(
+            0, "⚠ CONFIG DI-OVERRIDE — hasil ini tidak sesuai file config. "
+               "Jangan dipakai untuk pemesanan.")
     wb = Workbook()
 
     # ── Sheet 1: BBS ────────────────────────────────────────
     ws = wb.active
     ws.title = "BBS"
-    r = _header(ws, cfg, warnings)
+    r = _header(ws, cfg, warnings, extra_lines)
     headers = ["Bar Mark", "Lokasi", "Tipe", "Posisi", "Shape", "Dia (mm)",
                "Panjang (m)", "Jml/Elem", "Jml Elemen", "Total Batang",
                "Total Panjang (m)", "Unit Wt (kg/m)", "Total Berat (kg)"]
@@ -150,7 +157,7 @@ def generate_excel(cfg: ProjectConfig, elemen_list, cuts_bbs,
     # ── Sheet 2: POLA POTONG ────────────────────────────────
     ws2 = wb.create_sheet("POLA POTONG")
     r = _header(ws2, cfg, warnings,
-                extra_lines=("CATATAN: pola diurutkan frekuensi tertinggi. "
+                extra_lines=tuple(extra_lines) + ("CATATAN: pola diurutkan frekuensi tertinggi. "
                              "Jumlah pola belum dioptimasi utk kemudahan "
                              "lapangan (PATCH-01).",))
     for dia in sorted(hasil_opt):
@@ -197,7 +204,7 @@ def generate_excel(cfg: ProjectConfig, elemen_list, cuts_bbs,
 
     # ── Sheet 3: RINGKASAN ─────────────────────────────────
     ws3 = wb.create_sheet("RINGKASAN")
-    r = _header(ws3, cfg, warnings)
+    r = _header(ws3, cfg, warnings, extra_lines)
     ws3.cell(r, 1, "A. Kebutuhan Material").font = Font(bold=True, size=11)
     r += 1
     for i, h in enumerate(["Diameter", "Jml Batang", "Panjang Total (m)",

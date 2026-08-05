@@ -118,10 +118,25 @@ def test_override_tidak_menulis_file(client, elemen_payload):
 
 
 def test_override_invalid(client, elemen_payload):
+    # key asing ditolak (PATCH-02: key dikenal diverifikasi fail-loud)
     d = client.post("/api/hitung", json={
-        **elemen_payload, "override": {"ld": {"19": 999}}}).get_json()
+        **elemen_payload, "override": {"foo_bar": 1}}).get_json()
     assert d["ok"] is False
-    assert "Override 'ld' tidak didukung" in d["error"]
+    assert "foo_bar" in d["error"]
+    assert "tidak dikenal" in d["error"]
+
+
+def test_override_luas_ld(client, elemen_payload):
+    # override luas (PATCH-02 §1.3): ubah Ld D19 → panjang tulangan berubah.
+    # ld di-replace TOTAL — frontend kirim semua diameter (form edit lengkap).
+    d = client.post("/api/hitung", json={
+        **elemen_payload,
+        "override": {"ld": {"10": 400, "13": 520, "16": 640, "19": 1000}},
+    }).get_json()
+    assert d["ok"] is True, d
+    # B1 D19: 6000 + 2×1000 = 8000 (sebelumnya 7520)
+    panjang19 = [b["panjang_mm"] for b in d["bbs"] if b["dia"] == 19]
+    assert 8000 in panjang19
 
 
 # ── error baris ────────────────────────────────────────────

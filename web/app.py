@@ -77,18 +77,46 @@ ALLOWED_OVERRIDES = ("metode_hitung", "zona_tumpuan_faktor", "kerf_mm",
                      "sisa_min_simpan_mm")
 
 
+def _num(v, nama):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        raise ConfigError(f"Override {nama}: harus angka, dapat {v!r}")
+
+
 def _apply_override(cfg, override: dict):
-    """Override 4 field — dataclasses.replace, tidak menyentuh file."""
+    """Override config — dataclasses.replace, tidak menyentuh file (PATCH-02).
+
+    Mendukung dua bentuk:
+    - flat legacy (4 field): metode_hitung, zona_tumpuan_faktor, kerf_mm,
+      sisa_min_simpan_mm (07-SPEC-webui §4)
+    - nested luas (PATCH-02 §1.3 'Pakai sekali'): stok, cover, ld, lap,
+      unit_weight, hook_tail, bend_factor, koreksi_bend_aktif, sengkang
+    """
     if not override:
         return cfg
-    for k in override:
-        if k not in ALLOWED_OVERRIDES:
-            raise ConfigError(
-                f"Override '{k}' tidak didukung. Hanya: "
-                f"{', '.join(ALLOWED_OVERRIDES)}")
+
+    KNOWN = {"metode_hitung", "zona_tumpuan_faktor", "kerf_mm",
+             "sisa_min_simpan_mm", "stok", "cover", "ld", "lap",
+             "unit_weight", "hook_tail", "bend_factor",
+             "koreksi_bend_aktif", "sengkang"}
+    asing = set(override) - KNOWN
+    if asing:
+        raise ConfigError(
+            f"Override tidak dikenal: {', '.join(sorted(asing))}. "
+            f"Didukung: {', '.join(sorted(KNOWN))}")
 
     sk = cfg.sengkang_cfg
     stok = cfg.stok
+    ld = dict(cfg.ld)
+    lap = dict(cfg.lap)
+    uw = dict(cfg.unit_weight)
+    cover = dict(cfg.cover)
+    hook_tail = {s: dict(m) for s, m in cfg.hook_tail.items()}
+    bend = cfg.bend_factor
+    koreksi = cfg.koreksi_bend_aktif
+
+    # ── flat legacy (4 field) ──
     if "metode_hitung" in override:
         m = override["metode_hitung"]
         if m not in ("kontinyu", "per_zona"):
@@ -96,17 +124,60 @@ def _apply_override(cfg, override: dict):
                 f"metode_hitung harus 'kontinyu' atau 'per_zona', dapat {m!r}")
         sk = dataclasses.replace(sk, metode_hitung=m)
     if "zona_tumpuan_faktor" in override:
-        f = float(override["zona_tumpuan_faktor"])
+        f = _num(override["zona_tumpuan_faktor"], "zona_tumpuan_faktor")
         if not (0.0 <= f <= 0.5):
-            raise ConfigError(
-                f"zona_tumpuan_faktor = {f} harus 0-0.5")
+            raise ConfigError(f"zona_tumpuan_faktor = {f} harus 0-0.5")
         sk = dataclasses.replace(sk, zona_tumpuan_faktor=f)
     if "kerf_mm" in override:
-        stok = dataclasses.replace(stok, kerf_mm=int(override["kerf_mm"]))
+        stok = dataclasses.replace(stok, kerf_mm=int(_num(override["kerf_mm"], "kerf_mm")))
     if "sisa_min_simpan_mm" in override:
-        stok = dataclasses.replace(stok,
-                                   sisa_min_simpan_mm=int(override["sisa_min_simpan_mm"]))
-    return dataclasses.replace(cfg, sengkang_cfg=sk, stok=stok)
+        stok = dataclasses.replace(
+            stok, sisa_min_simpan_mm=int(_num(override["sisa_min_simpan_mm"],
+                                              "sisa_min_simpan_mm")))
+
+    # ── nested luas (PATCH-02) ──
+    if "stok" in override:
+        s = override["stok"]
+        for k in ("panjang_batang_mm", "kerf_mm", "sisa_min_simpan_mm"):
+            if k in s:
+                stok = dataclasses.replace(stok, **{k: int(_num(s[k], f"stok.{k}"))})
+    if "cover" in override:
+        for k, v in override["cover"].items():
+            cover[k] = int(_num(v, f"cover.{k}"))
+    if "ld" in override:
+        ld = {int(k): int(_num(v, f"ld.{k}")) for k, v in override["ld"].items()}
+    if "lap" in override:
+        lap = {int(k): int(_num(v, f"lap.{k}")) for k, v in override["lap"].items()}
+    if "unit_weight" in override:
+        uw = {int(k): _num(v, f"unit_weight.{k}")
+              for k, v in override["unit_weight"].items()}
+    if "hook_tail" in override:
+        for sudut, m in override["hook_tail"].items():
+            sudut_i = int(sudut)
+            hook_tail[sudut_i] = {int(d): int(_num(v, f"hook_tail.{sudut}.{d}"))
+                                  for d, v in m.items()}
+    if "bend_factor" in override:
+        bend = int(_num(override["bend_factor"], "bend_factor"))
+    if "koreksi_bend_aktif" in override:
+        koreksi = bool(override["koreksi_bend_aktif"])
+    if "sengkang" in override:
+        s = override["sengkang"]
+        if "zona_tumpuan_faktor" in s:
+            sk = dataclasses.replace(sk, zona_tumpuan_faktor=float(
+                _num(s["zona_tumpuan_faktor"], "sengkang.zona_tumpuan_faktor")))
+        if "jarak_sengkang_pertama_mm" in s:
+            sk = dataclasses.replace(sk, jarak_sengkang_pertama_mm=int(
+                _num(s["jarak_sengkang_pertama_mm"], "sengkang.jarak_sengkang_pertama_mm")))
+        if "metode_hitung" in s:
+            m = s["metode_hitung"]
+            if m not in ("kontinyu", "per_zona"):
+                raise ConfigError(
+                    f"metode_hitung harus 'kontinyu' atau 'per_zona', dapat {m!r}")
+            sk = dataclasses.replace(sk, metode_hitung=m)
+
+    return dataclasses.replace(cfg, sengkang_cfg=sk, stok=stok, ld=ld, lap=lap,
+                               unit_weight=uw, cover=cover, hook_tail=hook_tail,
+                               bend_factor=bend, koreksi_bend_aktif=koreksi)
 
 
 def _templates_dict(templates):
@@ -260,12 +331,17 @@ class ConfigDuplicate(Exception):
 def _signature_teknis(payload):
     """Nilai teknis dari gambar — dipakai deteksi 'revisi wajib berubah'."""
     cfg = payload["config"]
+    def nd(d):
+        return {str(k): v for k, v in (d or {}).items()}
+    def hook_sig(h):
+        h = h or {}
+        return {str(s): nd(m) for s, m in h.items() if isinstance(m, dict)}
     return {
-        "cover": cfg.get("selimut_beton_mm", {}),
-        "ld": cfg.get("panjang_penyaluran_mm", {}),
-        "lap": cfg.get("lap_splice_mm", {}),
-        "hook": cfg.get("hook", {}),
-        "sengkang": cfg.get("sengkang", {}),
+        "cover": nd(cfg.get("selimut_beton_mm")),
+        "ld": nd(cfg.get("panjang_penyaluran_mm")),
+        "lap": nd(cfg.get("lap_splice_mm")),
+        "hook": hook_sig(cfg.get("hook")),
+        "sengkang": {str(k): v for k, v in (cfg.get("sengkang") or {}).items()},
         "templates": payload["templates"],
     }
 
@@ -281,11 +357,17 @@ def _signature_teknis_dari_file(kode):
     tpl_d = yaml.safe_load(t.read_text())
     cfg_d.pop("_meta", None)
     tpl_d.pop("_meta", None)
-    return {"cover": cfg_d.get("selimut_beton_mm", {}),
-            "ld": cfg_d.get("panjang_penyaluran_mm", {}),
-            "lap": cfg_d.get("lap_splice_mm", {}),
-            "hook": cfg_d.get("hook", {}),
-            "sengkang": cfg_d.get("sengkang", {}),
+    # normalize key → str biar setara dengan payload JSON
+    def nd(d):
+        return {str(k): v for k, v in (d or {}).items()}
+    def hook_sig(h):
+        h = h or {}
+        return {str(s): nd(m) for s, m in h.items() if isinstance(m, dict)}
+    return {"cover": nd(cfg_d.get("selimut_beton_mm")),
+            "ld": nd(cfg_d.get("panjang_penyaluran_mm")),
+            "lap": nd(cfg_d.get("lap_splice_mm")),
+            "hook": hook_sig(cfg_d.get("hook")),
+            "sengkang": {str(k): v for k, v in (cfg_d.get("sengkang") or {}).items()},
             "templates": tpl_d}
 
 
@@ -369,6 +451,23 @@ def api_project_yaml(kode):
                      mimetype="text/yaml")
 
 
+# ── akses VPS (PATCH-02 §3) — opsi 3 default ───────────────
+# Bind bukan 127.0.0.1 → baca boleh publik, TULIS hanya dari localhost.
+def tulis_local_only(f):
+    from functools import wraps
+    @wraps(f)
+    def w(*a, **k):
+        addr = request.remote_addr or ""
+        if addr not in ("127.0.0.1", "::1"):
+            return jsonify({
+                "ok": False,
+                "error": "Endpoint tulis hanya bisa dipakai dari localhost "
+                         "(akses VPS publik = baca saja). SSH ke VPS atau "
+                         "gunakan SSH tunnel."}), 403
+        return f(*a, **k)
+    return w
+
+
 @app.get("/api/config")
 def api_config():
     cfg, templates = load_all(ROOT / "config")
@@ -376,11 +475,146 @@ def api_config():
                     "templates": _templates_dict(templates)})
 
 
+# ── simpan config dari panel (PATCH-02 §1) ─────────────────
+def _signature_patch02(cfg_d, tpl_d):
+    """Nilai teknis dari gambar — KECUALI kerf & sisa_min (PATCH-02 §1.4).
+
+    Key diameter dinormalisasi ke str — file YAML (int key) vs payload JSON
+    (string key) harus dibandingkan setara."""
+    def nd(d):
+        return {str(k): v for k, v in (d or {}).items()}
+
+    def hook_sig(h):
+        h = h or {}
+        return {str(s): nd(m) for s, m in h.items() if isinstance(m, dict)}
+
+    return {
+        "stok_panjang": (cfg_d.get("stok") or {}).get("panjang_batang_mm"),
+        "cover": nd(cfg_d.get("selimut_beton_mm")),
+        "ld": nd(cfg_d.get("panjang_penyaluran_mm")),
+        "lap": nd(cfg_d.get("lap_splice_mm")),
+        "hook": hook_sig(cfg_d.get("hook")),
+        "sengkang": {str(k): v for k, v in (cfg_d.get("sengkang") or {}).items()},
+        "templates": tpl_d,
+    }
+
+
+@app.patch("/api/config")
+@tulis_local_only
+def api_config_update():
+    """Simpan config proyek aktif. Validasi via loader + arsip + revisi wajib."""
+    import tempfile
+    import yaml
+    data = request.get_json(force=True) or {}
+    kode = data.get("kode") or ""
+    if not kode:
+        return jsonify({"ok": False, "error": "kode proyek wajib."}), 400
+    cfg_d = data.get("config") or {}
+    tpl_d = data.get("templates") or {}
+
+    # validasi via tempfile → loader
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            (td / "project.yaml").write_text(
+                yaml.safe_dump(cfg_d, allow_unicode=True))
+            (td / "templates.yaml").write_text(
+                yaml.safe_dump(tpl_d, allow_unicode=True))
+            load_all(td)  # ConfigError → ditangkap
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    # revisi wajib kalau nilai teknis berubah
+    proj_path = CONFIG_DIR / "projects" / f"{kode}.yaml"
+    tpl_path = CONFIG_DIR / "templates" / f"{kode}.yaml"
+    if proj_path.exists():
+        old_cfg = yaml.safe_load(proj_path.read_text())
+        old_cfg.pop("_meta", None)
+        old_tpl = yaml.safe_load(tpl_path.read_text())
+        old_tpl.pop("_meta", None)
+        old_sig = _signature_patch02(old_cfg, old_tpl)
+        new_sig = _signature_patch02(cfg_d, tpl_d)
+        if new_sig != old_sig:
+            old_rev = str((old_cfg.get("sumber") or {}).get("revisi", "")).strip()
+            new_rev = str(cfg_d.get("sumber", {}).get("revisi", "")).strip()
+            koreksi = bool(data.get("koreksi_bukan_revisi", False))
+            catatan = str(data.get("catatan", "")).strip()
+            if old_rev and new_rev == old_rev and not koreksi:
+                return jsonify({"ok": False, "error":
+                    f"Nilai teknis berubah tapi revisi gambar masih sama "
+                    f"({old_rev}). Kalau ini koreksi salah ketik, tulis "
+                    f"alasannya di catatan dan centang 'koreksi, bukan revisi "
+                    f"gambar'. Kalau gambar memang direvisi, isi revisi yang "
+                    f"baru."}), 400
+            if koreksi and not catatan:
+                return jsonify({"ok": False,
+                                "error": "Catatan wajib diisi kalau centang "
+                                         "'koreksi, bukan revisi gambar'."}), 400
+
+    # arsip file lama
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    arsip_dir = CONFIG_DIR / "_arsip"
+    arsip_dir.mkdir(exist_ok=True)
+    arsip_old = None
+    if proj_path.exists():
+        arsip_old = arsip_dir / f"project_{ts}.yaml"
+        proj_path.rename(arsip_old)
+    if tpl_path.exists():
+        (arsip_dir / f"templates_{ts}.yaml").write_text(tpl_path.read_text())
+        tpl_path.unlink()
+
+    # tulis baru + _meta
+    meta = (f"_meta:\n  diubah_via: web\n"
+            f"  diubah_pada: {datetime.now().astimezone().replace(microsecond=0).isoformat()}\n"
+            f"  diubah_dari: {arsip_old.name if arsip_old else '-'}\n")
+    proj_path.write_text(meta + yaml.safe_dump(cfg_d, allow_unicode=True))
+    tpl_path.write_text(meta + yaml.safe_dump(tpl_d, allow_unicode=True))
+    return jsonify({"ok": True, "kode": kode,
+                    "arsip": arsip_old.name if arsip_old else None})
+
+
 def _load_config(kode=None):
     """Load config — proyek by kode (F3.6), fallback legacy kalau kode kosong."""
     if kode:
         return load_project(CONFIG_DIR, kode)
     return load_all(CONFIG_DIR)
+
+
+def _override_diff(cfg_lama, cfg_baru) -> list[str]:
+    """Daftar field yang berubah karena override — utk banner & Excel."""
+    lines = []
+    if cfg_lama.stok.panjang_batang_mm != cfg_baru.stok.panjang_batang_mm:
+        lines.append(f"stok.panjang_batang_mm: {cfg_lama.stok.panjang_batang_mm} → {cfg_baru.stok.panjang_batang_mm}")
+    if cfg_lama.stok.kerf_mm != cfg_baru.stok.kerf_mm:
+        lines.append(f"kerf_mm: {cfg_lama.stok.kerf_mm} → {cfg_baru.stok.kerf_mm}")
+    if cfg_lama.stok.sisa_min_simpan_mm != cfg_baru.stok.sisa_min_simpan_mm:
+        lines.append(f"sisa_min_simpan_mm: {cfg_lama.stok.sisa_min_simpan_mm} → {cfg_baru.stok.sisa_min_simpan_mm}")
+    for zona in set(cfg_lama.cover) | set(cfg_baru.cover):
+        if cfg_lama.cover.get(zona) != cfg_baru.cover.get(zona):
+            lines.append(f"cover.{zona}: {cfg_lama.cover.get(zona)} → {cfg_baru.cover.get(zona)}")
+    for d in set(cfg_lama.ld) | set(cfg_baru.ld):
+        if cfg_lama.ld.get(d) != cfg_baru.ld.get(d):
+            lines.append(f"Ld D{d}: {cfg_lama.ld.get(d)} → {cfg_baru.ld.get(d)}")
+    for d in set(cfg_lama.lap) | set(cfg_baru.lap):
+        if cfg_lama.lap.get(d) != cfg_baru.lap.get(d):
+            lines.append(f"lap D{d}: {cfg_lama.lap.get(d)} → {cfg_baru.lap.get(d)}")
+    for d in set(cfg_lama.unit_weight) | set(cfg_baru.unit_weight):
+        if cfg_lama.unit_weight.get(d) != cfg_baru.unit_weight.get(d):
+            lines.append(f"unit_weight D{d}: {cfg_lama.unit_weight.get(d)} → {cfg_baru.unit_weight.get(d)}")
+    for s in set(cfg_lama.hook_tail) | set(cfg_baru.hook_tail):
+        a, b = cfg_lama.hook_tail.get(s, {}), cfg_baru.hook_tail.get(s, {})
+        for d in set(a) | set(b):
+            if a.get(d) != b.get(d):
+                lines.append(f"hook {s}° D{d}: {a.get(d)} → {b.get(d)}")
+    if cfg_lama.sengkang_cfg != cfg_baru.sengkang_cfg:
+        sk_l, sk_b = cfg_lama.sengkang_cfg, cfg_baru.sengkang_cfg
+        for f in ("zona_tumpuan_faktor", "jarak_sengkang_pertama_mm", "metode_hitung"):
+            if getattr(sk_l, f) != getattr(sk_b, f):
+                lines.append(f"sengkang.{f}: {getattr(sk_l, f)} → {getattr(sk_b, f)}")
+    if cfg_lama.koreksi_bend_aktif != cfg_baru.koreksi_bend_aktif:
+        lines.append(f"koreksi_bengkokan: {cfg_lama.koreksi_bend_aktif} → {cfg_baru.koreksi_bend_aktif}")
+    return lines
 
 
 @app.post("/api/hitung")
@@ -410,6 +644,8 @@ def api_hitung():
             resp["bug_internal"] = True
         return jsonify(resp), 400
 
+    diff = _override_diff(cfg, cfg_efektif)
+
     # agregasi per diameter utk BBS tampilan
     bbs_rows = [_bbs_dict(c) for c in agg]
     total_berat = sum(c.panjang_mm / 1000 * c.jumlah * cfg_efektif.unit_weight[c.dia]
@@ -421,6 +657,7 @@ def api_hitung():
         "ok": True,
         "config": _config_dict(cfg_efektif),
         "override_aktif": list(override.keys()),
+        "override_diff": diff,
         "bbs": bbs_rows,
         "optimizer": {str(d): _opt_dict(r) for d, r in
                       sorted(hasil_opt.items())},
@@ -456,12 +693,13 @@ def api_export():
             ValueError) as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
+    diff = _override_diff(cfg, cfg_efektif)
     out_dir = ROOT / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_path = out_dir / f"BBS_{cfg_efektif.kode}_{ts}.xlsx"
     generate_excel(cfg_efektif, elemen, cuts, hasil_opt, ROOT / "config",
-                   out_path)
+                   out_path, override_info=diff)
     return send_file(out_path, as_attachment=True,
                      download_name=out_path.name)
 

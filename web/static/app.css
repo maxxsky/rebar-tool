@@ -23,7 +23,19 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; }
 
 .layout { display: grid; grid-template-columns: 400px 1fr; gap: 16px;
           padding: 16px; max-width: 1500px; margin: 0 auto; }
-@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; padding: 10px; }
+  .topbar { flex-direction: column; align-items: stretch; }
+  .projbar { flex-wrap: wrap; }
+  .proj-select { flex: 1; min-width: 0; }
+  .proj-label { width: 100%; white-space: nowrap; overflow: hidden;
+                text-overflow: ellipsis; }
+  .tab-body { padding: 8px; }
+  .bar { height: 34px; font-size: 11px; }
+}
+.tab-body .kosong { color: #8a939e; padding: 32px 12px; text-align: center;
+                    font-size: 13px; }
+.tab-body { min-height: 240px; }
 
 .panel { background: #fff; border: 1px solid #dfe3e8; border-radius: 8px;
          padding: 12px; margin-bottom: 12px; }

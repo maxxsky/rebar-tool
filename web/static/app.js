@@ -34,18 +34,18 @@ function updateProjLabel() {
 }
 
 async function pilihProyek(kode) {
-  if (!kode) { templates = {}; $('projLabel').textContent = ''; return; }
+  if (!kode) { templates = {}; $('projLabel').textContent = ''; proyekRaw = null; return; }
   proyekAktif = kode;
   localStorage.setItem('rebar_proyek', kode);
   const d = await (await fetch(`/api/projects/${kode}`)).json();
   if (!d.ok) return;
   templates = d.templates;
+  proyekRaw = { config: d.config, templates: d.templates };
   const cfg = d.config;
   $('projLabel').textContent =
     `${cfg.proyek.nama} (${cfg.proyek.kode}) — ` +
     `${cfg.sumber.dokumen} ${cfg.sumber.revisi}`;
   renderParamFromConfig(cfg, []);
-  if (cfg.sumber && cfg.sumber.warnings_placeholder) { /* noop */ }
 }
 
 $('projSelect').onchange = (e) => pilihProyek(e.target.value);
@@ -464,7 +464,9 @@ function bacaOverride() {
 async function hitung() {
   const elemen = bacaElemen();
   if (!elemen.length) { alert('Isi minimal satu baris elemen.'); return; }
-  const override = bacaOverride();
+  // override 4-field + override luas 'Pakai sekali' (PATCH-02)
+  const override = { ...bacaOverride() };
+  if (wideOverride) Object.assign(override, wideOverride);
   lastElemen = elemen; lastOverride = override;
 
   const res = await fetch('/api/hitung', {
@@ -505,7 +507,7 @@ function renderStat(t) {
 
 function renderBBS(rows, d) {
   const box = $('tab-bbs');
-  if (!rows.length) { box.innerHTML = '<div style="color:#5b6572">Tidak ada output.</div>'; return; }
+  if (!rows.length) { box.innerHTML = '<div class="kosong">Tekan Hitung untuk melihat hasil.</div>'; return; }
   const uw = d.config.unit_weight;
   let totalBerat = 0, totalPanjang = 0;
   let html = `<table><thead><tr>
@@ -583,6 +585,9 @@ function barHtml(p, stok, kerf) {
 }
 
 // ── parameter panel ────────────────────────────────────────
+let proyekRaw = null;      // config & templates mentah proyek aktif
+let wideOverride = null;   // override luas 'Pakai sekali' (PATCH-02)
+
 function renderParam(cfg, overrideAktif) {
   const oset = new Set(overrideAktif);
   const flag = (k) => oset.has(k) ? ' <span class="ovr-flag">[override]</span>' : '';
@@ -599,6 +604,10 @@ function renderParam(cfg, overrideAktif) {
     `sengkang pertama ${cfg.jarak_sengkang_pertama_mm} mm | ` +
     `metode ${cfg.metode_hitung}${flag('metode_hitung')}\n` +
     `koreksi bengkokan: ${cfg.koreksi_bend_aktif ? 'AKTIF' : 'nonaktif'}`;
+  $('paramActions').style.display = proyekAktif ? '' : 'none';
+  $('paramForm').style.display = 'none';
+  $('paramBody').style.display = '';
+  $('btnParamEdit').textContent = '✎ Edit';
 }
 
 function renderParamFromConfig(cfg, overrideAktif) {
@@ -616,6 +625,163 @@ function renderParamFromConfig(cfg, overrideAktif) {
   };
   renderParam(c, overrideAktif || []);
 }
+
+// ── edit panel (PATCH-02 §1) ───────────────────────────────
+function renderPanelEdit() {
+  if (!proyekRaw) return;
+  const c = proyekRaw.config;
+  const dias = new Set([...Object.keys(c.panjang_penyaluran_mm || {}),
+                        ...Object.keys(c.hook.tail_135_mm || {}),
+                        ...Object.keys(c.hook.tail_90_mm || {}),
+                        ...Object.keys(c.unit_weight_kg_per_m || {}),
+                        ...Object.keys(c.lap_splice_mm || {})].map(Number));
+  const rows = [...dias].sort((a, b) => a - b).map(d => `
+    <tr data-dia="${d}">
+      <td><b>D${d}</b></td>
+      <td><input class="e-ld" type="number" value="${c.panjang_penyaluran_mm[d] || ''}"></td>
+      <td><input class="e-lap" type="number" value="${c.lap_splice_mm[d] || ''}"></td>
+      <td><input class="e-uw" type="number" step="0.001" value="${c.unit_weight_kg_per_m[d] ?? UWTABEL[d] ?? ''}"></td>
+      <td><input class="e-h135" type="number" value="${c.hook.tail_135_mm[d] || ''}"></td>
+      <td><input class="e-h90" type="number" value="${c.hook.tail_90_mm[d] || ''}"></td>
+    </tr>`).join('');
+  const sk = c.sengkang;
+  $('paramForm').innerHTML = `
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Panjang stok (mm)</label>
+        <input id="ePanjang" type="number" value="${c.stok.panjang_batang_mm}"></div>
+      <div class="wiz-field"><label>Kerf (mm)</label>
+        <input id="eKerf" type="number" value="${c.stok.kerf_mm}"></div>
+      <div class="wiz-field"><label>Sisa min (mm)</label>
+        <input id="eSisa" type="number" value="${c.stok.sisa_min_simpan_mm}"></div>
+      <div class="wiz-field"><label>Cover balok</label>
+        <input id="eCoverB" type="number" value="${c.selimut_beton_mm.balok || ''}"></div>
+      <div class="wiz-field"><label>Cover kolom</label>
+        <input id="eCoverK" type="number" value="${c.selimut_beton_mm.kolom || ''}"></div>
+      <div class="wiz-field"><label>Cover plat</label>
+        <input id="eCoverP" type="number" value="${c.selimut_beton_mm.plat || ''}"></div>
+    </div>
+    <table class="dia-table"><thead><tr>
+      <th>Ø</th><th>Ld</th><th>Lap</th><th>UW</th><th>H135</th><th>H90</th></tr></thead>
+      <tbody id="panelDia">${rows}</tbody></table>
+    <button class="btn" onclick="panelAddDia()">+ diameter</button>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Zona tumpuan</label>
+        <input id="eZona" type="number" step="0.05" value="${sk.zona_tumpuan_faktor}"></div>
+      <div class="wiz-field"><label>Sengkang pertama</label>
+        <input id="ePertama" type="number" value="${sk.jarak_sengkang_pertama_mm}"></div>
+      <div class="wiz-field"><label>Metode</label>
+        <select id="eMetode"><option value="kontinyu" ${sk.metode_hitung === 'kontinyu' ? 'selected' : ''}>kontinyu</option>
+        <option value="per_zona" ${sk.metode_hitung === 'per_zona' ? 'selected' : ''}>per_zona</option></select></div>
+    </div>
+    <div class="wiz-field"><label><input id="eKoreksi" type="checkbox" ${c.hook.koreksi_bengkokan_aktif ? 'checked' : ''}>
+      Koreksi bengkokan aktif</label></div>
+    <div class="ovr-actions">
+      <button class="btn primary" onclick="panelPakaiSekali()">Pakai sekali</button>
+      <button class="btn" onclick="panelSimpanConfig()">Simpan ke config</button>
+      <button class="btn" onclick="renderParamFromConfig(proyekRaw.config, [])">Batal</button>
+    </div>`;
+  $('paramForm').style.display = '';
+  $('paramBody').style.display = 'none';
+  $('paramActions').style.display = 'none';
+  $('btnParamEdit').textContent = '';
+}
+
+function panelAddDia() {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input class="e-dia" type="number" placeholder="Ø"></td>
+    <td><input class="e-ld" type="number"></td><td><input class="e-lap" type="number"></td>
+    <td><input class="e-uw" type="number" step="0.001"></td>
+    <td><input class="e-h135" type="number"></td><td><input class="e-h90" type="number"></td>`;
+  $('panelDia').appendChild(tr);
+}
+
+function bacaPanelForm() {
+  const c = proyekRaw.config;
+  c.stok.panjang_batang_mm = +$('ePanjang').value;
+  c.stok.kerf_mm = +$('eKerf').value;
+  c.stok.sisa_min_simpan_mm = +$('eSisa').value;
+  c.selimut_beton_mm = { balok: +$('eCoverB').value, kolom: +$('eCoverK').value,
+                         plat: +$('eCoverP').value };
+  const ld = {}, lap = {}, uw = {}, h135 = {}, h90 = {};
+  document.querySelectorAll('#panelDia tr').forEach(tr => {
+    const diaInput = tr.querySelector('.e-dia');
+    const diaRaw = (tr.querySelector('b') || {}).textContent || '';
+    const dia = diaInput && diaInput.value !== '' ? +diaInput.value
+               : (parseInt(diaRaw.replace('D', '')) || NaN);
+    if (!isNaN(dia)) {
+      const v = (sel) => { const x = tr.querySelector(sel); return x && x.value !== '' ? +x.value : undefined; };
+      const a = v('.e-ld'); if (a) ld[dia] = a;
+      const b = v('.e-lap'); if (b) lap[dia] = b;
+      const u = v('.e-uw'); if (u) uw[dia] = u;
+      const h1 = v('.e-h135'); if (h1) h135[dia] = h1;
+      const h2 = v('.e-h90'); if (h2) h90[dia] = h2;
+    }
+  });
+  c.panjang_penyaluran_mm = ld;
+  c.lap_splice_mm = lap;
+  c.unit_weight_kg_per_m = uw;
+  c.hook.tail_135_mm = h135;
+  c.hook.tail_90_mm = h90;
+  c.sengkang.zona_tumpuan_faktor = +$('eZona').value;
+  c.sengkang.jarak_sengkang_pertama_mm = +$('ePertama').value;
+  c.sengkang.metode_hitung = $('eMetode').value;
+  c.hook.koreksi_bengkokan_aktif = $('eKoreksi').checked;
+  return c;
+}
+
+function panelPakaiSekali() {
+  const c = bacaPanelForm();
+  wideOverride = {
+    stok: c.stok, cover: c.selimut_beton_mm, ld: c.panjang_penyaluran_mm,
+    lap: c.lap_splice_mm, unit_weight: c.unit_weight_kg_per_m,
+    hook_tail: { '135': c.hook.tail_135_mm, '90': c.hook.tail_90_mm },
+    bend_factor: c.hook.diameter_bengkok_faktor,
+    koreksi_bend_aktif: c.hook.koreksi_bengkokan_aktif,
+    sengkang: c.sengkang,
+  };
+  showOverrideBanner();
+  renderParamFromConfig(proyekRaw.config, []);
+  hitung();
+}
+
+function showOverrideBanner() {
+  const b = $('warnBanner');
+  b.textContent = '⚠ CONFIG DI-OVERRIDE — hasil ini tidak sesuai file config. Jangan dipakai untuk pemesanan.';
+  b.className = 'show';
+  b.style.background = '#fee2e2';
+  b.style.borderBottomColor = '#b4232c';
+}
+
+async function panelSimpanConfig() {
+  const c = bacaPanelForm();
+  const revisi = prompt('Revisi gambar yang jadi dasar nilai baru (wajib):', proyekRaw.config.sumber.revisi || '');
+  if (revisi === null) return;
+  const catatan = prompt('Catatan — dari mana nilainya diambil (wajib):', proyekRaw.config.sumber.catatan || '');
+  if (catatan === null) return;
+  const koreksi = confirm('Centang OK kalau ini KOREKSI SALAH KETIK, bukan revisi gambar.');
+  c.sumber.revisi = revisi.trim();
+  c.sumber.catatan = catatan.trim();
+  const res = await fetch('/api/config', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kode: proyekAktif, config: c, templates: proyekRaw.templates,
+                           revisi: revisi.trim(), catatan: catatan.trim(),
+                           koreksi_bukan_revisi: koreksi })
+  });
+  const d = await res.json();
+  if (!d.ok) { alert(d.error || 'Gagal simpan'); return; }
+  wideOverride = null;
+  $('warnBanner').className = '';
+  alert('Tersimpan. File lama diarsipkan.');
+  await pilihProyek(proyekAktif);
+}
+
+$('btnParamEdit').onclick = () => renderPanelEdit();
+$('btnParamYaml').onclick = () => {
+  const a = document.createElement('a');
+  a.href = `/api/projects/${proyekAktif}/yaml`;
+  a.download = `${proyekAktif}.yaml`;
+  a.click();
+};
 
 // ── tab ────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {

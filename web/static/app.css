@@ -20,6 +20,19 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; }
 .proj-label { font-size: 12px; color: #b7c1cc; }
 .topbar .btn { background: #2a323c; color: #e6eaf0; border-color: #4a5460;
                padding: 6px 12px; }
+.setup-progress { width: 100%; font-size: 11.5px; color: #9aa5b1;
+                  display: flex; gap: 14px; flex-wrap: wrap; }
+.setup-progress .ok { color: #6bbf59; }
+.setup-progress .warn { color: #e6a817; }
+.result-banner { display: none; background: #fee2e2; border: 1px solid #b4232c;
+                 border-radius: 8px; padding: 10px 14px; font-size: 13px;
+                 color: #7f1d1d; margin-bottom: 12px; font-weight: 600; }
+.result-banner.show { display: block; }
+.wz-proyek { color: #6b7280; font-size: 10.5px; }
+.panel-sub { background: #f9fafb; border: 1px dashed #cbd2d9; border-radius: 8px;
+             padding: 10px 12px; margin-top: 10px; }
+.panel-sub summary { cursor: pointer; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .layout { display: grid; grid-template-columns: 400px 1fr; gap: 16px;
           padding: 16px; max-width: 1500px; margin: 0 auto; }

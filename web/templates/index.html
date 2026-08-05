@@ -7,7 +7,6 @@
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<div id="warnBanner"></div>
 
 <div class="topbar">
   <div class="brand">Rebar BBS <span class="sub">verifikasi F4</span></div>
@@ -21,41 +20,48 @@
     <button id="btnNewGbr" class="btn" style="display:none">+ Gambar</button>
     <span id="projLabel" class="proj-label"></span>
     <button id="btnNewProj" class="btn">+ Proyek baru</button>
-    <button id="btnEditProj" class="btn" title="edit config proyek aktif">✎ Edit</button>
   </div>
+  <div id="setupProgress" class="setup-progress"></div>
 </div>
 
 <div class="layout">
   <div class="col-left">
     <div class="panel">
       <div class="panel-title">ELEMEN</div>
+      <div class="hint">Bentang bersih — muka ke muka tumpuan, bukan as-ke-as.</div>
       <div id="rowHead" class="row-head">
         <span>tipe</span><span>bentang (mm)</span><span>jml</span><span></span>
       </div>
       <div id="rows"></div>
       <button id="btnAdd" class="btn">+ baris</button>
-    </div>
-
-    <div class="panel">
-      <div class="panel-title">OVERRIDE <span class="hint">(sementara, tidak menyentuh config)</span></div>
-      <div class="ovr-grid">
-        <label>metode<select id="ovrMetode">
-          <option value="">— file config —</option>
-          <option value="kontinyu">kontinyu</option>
-          <option value="per_zona">per_zona</option>
-        </select></label>
-        <label>zona tumpuan<input id="ovrZona" type="number" step="0.05" min="0" max="0.5" placeholder="—"></label>
-        <label>kerf (mm)<input id="ovrKerf" type="number" step="1" min="0" placeholder="—"></label>
-        <label>sisa min (mm)<input id="ovrSisaMin" type="number" step="50" min="0" placeholder="—"></label>
-      </div>
       <div class="ovr-actions">
         <button id="btnHitung" class="btn primary">Hitung</button>
         <button id="btnExcel" class="btn">Export Excel</button>
       </div>
+
+      <!-- Kotak "Coba nilai lain" — alat bantu F4. Boleh dihapus setelah VERIFIED.md terisi. -->
+      <details id="cobaPanel" class="panel-sub">
+        <summary class="panel-title">▸ Coba nilai lain — tidak disimpan</summary>
+        <div class="wiz-hint" style="margin-bottom:8px">
+          Untuk verifikasi F4: coba nilai lain sekali jalan tanpa mengubah config.
+          Kalau hasilnya cocok dengan BBS asli, simpan permanen lewat panel
+          <b>Nilai teknis</b> di bawah.
+        </div>
+        <div class="ovr-grid">
+          <label>metode<select id="ovrMetode">
+            <option value="">— ikut proyek —</option>
+            <option value="kontinyu">kontinyu</option>
+            <option value="per_zona">per_zona</option>
+          </select></label>
+          <label>zona tumpuan<input id="ovrZona" type="number" step="0.05" min="0" max="0.5" placeholder="—"></label>
+          <label>kerf (mm)<input id="ovrKerf" type="number" step="1" min="0" placeholder="—"></label>
+          <label>sisa min (mm)<input id="ovrSisaMin" type="number" step="50" min="0" placeholder="—"></label>
+        </div>
+      </details>
     </div>
 
     <details class="panel" id="paramPanel">
-      <summary class="panel-title">▸ PARAMETER CONFIG</summary>
+      <summary class="panel-title" id="paramTitle">▸ NILAI TEKNIS</summary>
       <div id="paramBody" class="param-body">…</div>
       <div id="paramActions" class="param-actions" style="display:none">
         <button id="btnParamEdit" class="btn">✎ Edit</button>
@@ -66,34 +72,28 @@
   </div>
 
   <div class="col-right">
+    <div id="warnBanner" class="result-banner"></div>
     <div id="stats" class="stats"></div>
     <div class="tabs">
       <button class="tab active" data-tab="bbs">BBS</button>
       <button class="tab" data-tab="pola">Pola potong</button>
     </div>
-    <div id="tab-bbs" class="tab-body"></div>
+    <div id="tab-bbs" class="tab-body">
+      <div class="kosong">Pilih proyek & gambar, isi elemen, lalu tekan Hitung.</div>
+    </div>
     <div id="tab-pola" class="tab-body" style="display:none"></div>
   </div>
 </div>
 
-<!-- Wizard proyek -->
+<!-- Layar proyek baru — daftar status 5 langkah -->
 <div id="wizard" class="modal" style="display:none">
   <div class="modal-box">
     <div class="modal-head">
       <span id="wizTitle">Proyek baru</span>
       <button id="wizClose" class="del">✕</button>
     </div>
-    <div class="steps">
-      <span class="step active" data-s="1">1 Identitas</span>
-      <span class="step" data-s="2">2 Stok & Cover</span>
-      <span class="step" data-s="3">3 Diameter</span>
-      <span class="step" data-s="4">4 Sengkang</span>
-      <span class="step" data-s="5">5 Template</span>
-    </div>
     <div id="wizBody" class="modal-body"></div>
     <div class="modal-foot">
-      <button id="wizPrev" class="btn">← Kembali</button>
-      <button id="wizNext" class="btn primary">Lanjut →</button>
       <button id="wizSave" class="btn primary" style="display:none">Simpan</button>
     </div>
   </div>

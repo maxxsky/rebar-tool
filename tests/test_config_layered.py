@@ -230,6 +230,54 @@ def test_endpoint_drawings_crud(client, tmp_path):
     assert r.status_code == 200
 
 
+# ── PUT /api/projects (berlapis) — update default & templates ─
+def test_put_proyek_berlapis_update_templates(client, tmp_path):
+    _appmod.CONFIG_DIR = tmp_path
+    _buat_proyek_berlapis(tmp_path)
+    # baca config default + templates, tambah tipe B2
+    r = client.get("/api/projects/LAP1")
+    d = r.get_json()
+    assert d["ok"] and d["berlapis"] is True
+    tpls = d["templates"]
+    tpls["balok"]["B2"] = {
+        "deskripsi": "balok anak", "b_mm": 250, "h_mm": 500,
+        "tulangan": [{"posisi": "atas", "dia": 13, "jumlah": 3,
+                      "tumpuan_kedua_ujung": True}],
+        "sengkang": {"dia": 10, "jarak_tumpuan_mm": 100,
+                     "jarak_lapangan_mm": 150, "kaki": 2, "hook_sudut": 135}}
+    r = client.put("/api/projects/LAP1", json={
+        "kode": "LAP1", "config": d["config"], "templates": tpls})
+    assert r.status_code == 200, r.get_json()
+    # templates tersimpan di folder berlapis
+    import yaml
+    saved = yaml.safe_load(
+        (tmp_path / "projects" / "LAP1" / "templates.yaml").read_text())
+    assert "B2" in saved["balok"]
+    # arsip templates ada
+    arsip = tmp_path / "projects" / "LAP1" / "_arsip"
+    assert list(arsip.glob("templates_*.yaml"))
+    # gambar GS-01 bisa pakai B2
+    r = client.post("/api/hitung", json={
+        "proyek": "LAP1", "gambar": "GS-01",
+        "elemen": [{"tipe": "B2", "bentang_bersih_mm": 4000, "jumlah": 1}]})
+    d2 = r.get_json()
+    assert d2["ok"] is True, d2
+
+
+def test_put_proyek_revisi_wajib_berlapis(client, tmp_path):
+    _appmod.CONFIG_DIR = tmp_path
+    _buat_proyek_berlapis(tmp_path)
+    r = client.get("/api/projects/LAP1")
+    d = r.get_json()
+    # ubah nilai teknis default (Ld D19) tapi revisi tetap Rev.1
+    cfg = d["config"]
+    cfg["panjang_penyaluran_mm"]["19"] = 800
+    r = client.put("/api/projects/LAP1", json={
+        "kode": "LAP1", "config": cfg, "templates": d["templates"]})
+    assert r.status_code == 400
+    assert "revisi" in r.get_json()["error"].lower()
+
+
 # ── hitung pakai proyek+gambar → bar mark prefix ──────────
 def test_hitung_bar_mark_prefix(client, tmp_path):
     _appmod.CONFIG_DIR = tmp_path

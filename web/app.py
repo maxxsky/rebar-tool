@@ -444,20 +444,66 @@ def api_project_create():
 
 @app.put("/api/projects/<kode>")
 def api_project_update(kode):
+    """Ubah default proyek / templates — flat legacy & berlapis (08 §9)."""
+    import shutil
+    import tempfile
+    import yaml
     data = request.get_json(force=True) or {}
     new_kode = str(data.get("kode", kode))
-    # edit: kode harus sama dengan path
     if new_kode != kode:
         return jsonify({"ok": False,
                         "error": "Kode tidak bisa diubah lewat edit."}), 400
+    cfg_d = data.get("config") or {}
+    tpl_d = data.get("templates") or {}
+
+    # validasi via loader (tempfile) — satu sumber kebenaran
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            (td / "project.yaml").write_text(yaml.safe_dump(cfg_d, allow_unicode=True))
+            (td / "templates.yaml").write_text(yaml.safe_dump(tpl_d, allow_unicode=True))
+            load_all(td)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    # ── berlapis: tulis ke projects/{kode}/ ──
+    pdir = CONFIG_DIR / "projects" / kode
+    if (pdir / "project.yaml").exists():
+        # revisi wajib kalau nilai teknis default berubah
+        from datetime import datetime
+        old_cfg = yaml.safe_load((pdir / "project.yaml").read_text())
+        old_cfg.pop("_meta", None)
+        old_tpl = yaml.safe_load((pdir / "templates.yaml").read_text())
+        old_tpl.pop("_meta", None)
+        old_sig = _signature_patch02(old_cfg, old_tpl)
+        new_sig = _signature_patch02(cfg_d, tpl_d)
+        if new_sig != old_sig:
+            old_rev = str((old_cfg.get("sumber") or {}).get("revisi", "")).strip()
+            new_rev = str(cfg_d.get("sumber", {}).get("revisi", "")).strip()
+            if old_rev and new_rev == old_rev:
+                return jsonify({"ok": False, "error":
+                    "Nilai teknis proyek berubah tapi revisi gambar masih sama "
+                    f"({old_rev}). Perbarui field revisi."}), 400
+        # arsip
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        arsip_dir = CONFIG_DIR / "projects" / kode / "_arsip"
+        arsip_dir.mkdir(exist_ok=True)
+        shutil.copy2(pdir / "project.yaml", arsip_dir / f"project_{ts}.yaml")
+        shutil.copy2(pdir / "templates.yaml", arsip_dir / f"templates_{ts}.yaml")
+        meta = (f"_meta:\n  diubah_via: web\n  diubah_pada: "
+                f"{datetime.now().astimezone().replace(microsecond=0).isoformat()}\n")
+        (pdir / "project.yaml").write_text(meta + yaml.safe_dump(cfg_d, allow_unicode=True))
+        (pdir / "templates.yaml").write_text(meta + yaml.safe_dump(tpl_d, allow_unicode=True))
+        return jsonify({"ok": True, "kode": kode, "berlapis": True})
+
+    # ── flat legacy (F3.6) ──
     old_sig = _signature_teknis_dari_file(kode)
     if old_sig is None:
         return jsonify({"ok": False, "error": f"Proyek '{kode}' tidak ada."}), 404
     new_sig = _signature_teknis(data)
     if new_sig != old_sig:
-        # nilai teknis berubah → revisi wajib berbeda
         old_rev = _revisi_dari_file(kode)
-        new_rev = str(data["config"].get("sumber", {}).get("revisi", "")).strip()
+        new_rev = str(cfg_d.get("sumber", {}).get("revisi", "")).strip()
         if old_rev and new_rev == old_rev:
             return jsonify({"ok": False,
                             "error": "Nilai teknis berubah tapi revisi gambar masih "
@@ -468,7 +514,7 @@ def api_project_update(kode):
         _simpan_proyek_baru(data, arsip_lama=True)
     except ConfigError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
-    return jsonify({"ok": True, "kode": kode})
+    return jsonify({"ok": True, "kode": kode, "berlapis": False})
 
 
 def _revisi_dari_file(kode):
@@ -726,7 +772,8 @@ def _signature_patch02(cfg_d, tpl_d):
         "lap": nd(cfg_d.get("lap_splice_mm")),
         "hook": hook_sig(cfg_d.get("hook")),
         "sengkang": {str(k): v for k, v in (cfg_d.get("sengkang") or {}).items()},
-        "templates": tpl_d,
+        # templates TIDAK masuk signature — definisi elemen, bukan nilai teknis
+        # gambar (PATCH-05: nambah tipe elemen tidak wajib revisi).
     }
 
 

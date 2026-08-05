@@ -1,43 +1,61 @@
 _meta:
-  dibuat_via: migrasi
-  dibuat_pada: 2026-08-05T08:16:25+00:00
-# Template tipe elemen — didefinisikan sekali per proyek.
-# Hanya 'balok' didukung di fase awal (kolom/plat menyusul F5/F7).
+  diubah_via: web
+  diubah_pada: 2026-08-06T07:28:31+08:00
 balok:
   B1:
-    deskripsi: "Balok induk 300x600"
     b_mm: 300
+    deskripsi: Balok induk 300x600
     h_mm: 600
-    tulangan:
-      - posisi: "atas"
-        dia: 19
-        jumlah: 4
-        tumpuan_kedua_ujung: true    # tambah Ld di kedua ujung
-      - posisi: "bawah"
-        dia: 19
-        jumlah: 3
-        tumpuan_kedua_ujung: true
-      - posisi: "pinggang"
-        dia: 13
-        jumlah: 2
-        tumpuan_kedua_ujung: true
     sengkang:
       dia: 10
-      jarak_tumpuan_mm: 150
+      hook_sudut: 135
       jarak_lapangan_mm: 200
-      kaki: 2                        # 2 kaki = sengkang tunggal persegi
-      hook_sudut: 135
-
-  B2:
-    deskripsi: "Balok anak 250x500"
-    b_mm: 250
-    h_mm: 500
+      jarak_tumpuan_mm: 150
+      kaki: 2
     tulangan:
-      - { posisi: "atas",  dia: 16, jumlah: 3, tumpuan_kedua_ujung: true }
-      - { posisi: "bawah", dia: 16, jumlah: 2, tumpuan_kedua_ujung: true }
+    - dia: 19
+      jumlah: 4
+      posisi: atas
+      tumpuan_kedua_ujung: true
+    - dia: 19
+      jumlah: 3
+      posisi: bawah
+      tumpuan_kedua_ujung: true
+    - dia: 13
+      jumlah: 2
+      posisi: pinggang
+      tumpuan_kedua_ujung: true
+  B2:
+    b_mm: 250
+    deskripsi: Balok anak 250x500
+    h_mm: 500
     sengkang:
       dia: 10
-      jarak_tumpuan_mm: 100
-      jarak_lapangan_mm: 150
-      kaki: 2
       hook_sudut: 135
+      jarak_lapangan_mm: 150
+      jarak_tumpuan_mm: 100
+      kaki: 2
+    tulangan:
+    - dia: 16
+      jumlah: 3
+      posisi: atas
+      tumpuan_kedua_ujung: true
+    - dia: 16
+      jumlah: 2
+      posisi: bawah
+      tumpuan_kedua_ujung: true
+  B3:
+    b_mm: 250
+    deskripsi: balok atap
+    h_mm: 450
+    sengkang:
+      dia: 10
+      hook_sudut: 135
+      jarak_lapangan_mm: 150
+      jarak_tumpuan_mm: 100
+      kaki: 2
+    tulangan:
+    - dia: 16
+      jumlah: 3
+      posisi: atas
+      tumpuan_kedua_ujung: true

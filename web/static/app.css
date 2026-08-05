@@ -29,6 +29,9 @@ code { font-family: ui-monospace, 'JetBrains Mono', monospace; }
                  color: #7f1d1d; margin-bottom: 12px; font-weight: 600; }
 .result-banner.show { display: block; }
 .wz-proyek { color: #6b7280; font-size: 10.5px; }
+.elem-summary { font-size: 11.5px; margin-bottom: 8px; }
+.tpl-summary { padding: 3px 0; border-bottom: 1px dashed #edf0f3;
+               font-size: 11px; color: #2b3440; }
 .panel-sub { background: #f9fafb; border: 1px dashed #cbd2d9; border-radius: 8px;
              padding: 10px 12px; margin-top: 10px; }
 .panel-sub summary { cursor: pointer; }

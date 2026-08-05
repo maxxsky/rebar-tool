@@ -61,6 +61,7 @@ async function pilihProyek(kode) {
     $('btnNewGbr').style.display = 'none';
     renderParamFromConfig(d.config, []);
     renderSetupProgress();
+    renderElemSummary();
     return;
   }
 
@@ -80,6 +81,7 @@ async function pilihProyek(kode) {
     await pilihGambar(gambarAktif);
   } else {
     $('projLabel').textContent = `${kode} — belum ada gambar`;
+    renderElemSummary();
   }
 }
 
@@ -97,6 +99,7 @@ async function pilihGambar(gkode) {
     `${proyekAktif} · ${gkode} ${info.revisi || ''} — ${info.nama || ''}`;
   renderPanelView(d.config_efektif);
   renderSetupProgress();
+  renderElemSummary();
 }
 
 $('gbrSelect').onchange = (e) => pilihGambar(e.target.value);
@@ -123,11 +126,6 @@ function updateProjLabel() { /* diganti pilihProyek/pilihGambar */ }
 
 $('projSelect').onchange = (e) => pilihProyek(e.target.value);
 $('btnNewProj').onclick = () => bukaWizard('baru');
-$('btnEditProj').onclick = async () => {
-  if (!proyekAktif) { alert('Pilih proyek dulu.'); return; }
-  const d = await (await fetch(`/api/projects/${proyekAktif}`)).json();
-  if (d.ok) bukaWizard('edit', d);
-};
 
 // ── layar proyek baru (PATCH-04 §7) — daftar status 5 langkah ──
 let wiz = null;      // { mode, kode, config, templates }
@@ -721,6 +719,279 @@ $('btnParamYaml').onclick = () => {
   a.download = `${proyekAktif}.yaml`;
   a.click();
 };
+
+// ── panel elemen — ringkasan template (PATCH-05 §3-4) ──────
+function tplRingkasanSatu(nama, t) {
+  const tul = (t.tulangan || []).map(x =>
+    `${x.jumlah}D${x.dia} ${x.posisi}`).join(', ');
+  const sk = t.sengkang || {};
+  return `${nama} · ${t.b_mm}×${t.h_mm} · ${tul || '—'} · ` +
+         `sengkang D${sk.dia || '?'}-${sk.jarak_tumpuan_mm || '?'}/${sk.jarak_lapangan_mm || '?'}`;
+}
+
+function renderElemSummary() {
+  const box = $('elemSummary');
+  const raw = proyekRaw && proyekRaw.templates;
+  const tpls = (raw && (raw.balok || raw)) || {};
+  const names = Object.keys(tpls);
+  if (!proyekAktif) { box.innerHTML = ''; return; }
+  if (!names.length) {
+    box.innerHTML = `<div class="wiz-warn" style="margin:0 0 8px">
+      ⚠ Belum ada tipe elemen di proyek ini. Tambahkan minimal satu sebelum bisa menghitung.</div>`;
+    return;
+  }
+  const shown = names.slice(0, 3);
+  const extra = names.length - shown.length;
+  box.innerHTML = `<div class="wiz-hint" style="margin-bottom:4px">Tipe tersedia di ${proyekAktif}:</div>` +
+    shown.map(n => `<div class="tpl-summary">${tplRingkasanSatu(n, tpls[n])}</div>`).join('') +
+    (extra > 0 ? `<div class="wiz-hint">dan ${extra} lainnya</div>` : '');
+}
+
+// ── editor elemen (PATCH-05 §5) — form template elemen ─────
+let elemenDraft = null;
+
+function bukaEditorElemen() {
+  if (!proyekAktif) { alert('Pilih proyek dulu.'); return; }
+  if (!proyekBerlapis) { alert('Proyek ini belum berlapis — pakai panel Nilai teknis.'); return; }
+  elemenDraft = JSON.parse(JSON.stringify(
+    (proyekRaw.templates && (proyekRaw.templates.balok || proyekRaw.templates)) || {}));
+  $('elemModal').style.display = 'flex';
+  renderElemEditor();
+}
+function elemModalClose() { $('elemModal').style.display = 'none'; elemenDraft = null; }
+
+function renderElemEditor() {
+  const body = $('elemModalBody');
+  const names = Object.keys(elemenDraft || {});
+  body.innerHTML = `
+    <div class="wiz-hint" style="margin-bottom:8px">Template elemen milik proyek — dipakai di semua gambar. Sengkang D{dia}-{jarak_tumpuan}/{jarak_lapangan}.</div>
+    ${names.map(n => tplBlockHtml(n, elemenDraft[n], true)).join('')}
+    <button class="btn" onclick="elemAddTpl()">+ tipe elemen</button>`;
+}
+
+function elemAddTpl() {
+  const next = 'B' + (Object.keys(elemenDraft).length + 1);
+  elemenDraft[next] = {
+    deskripsi: '', b_mm: '', h_mm: '',
+    tulangan: [{ posisi: 'atas', dia: '', jumlah: '', tumpuan_kedua_ujung: true }],
+    sengkang: { dia: '', jarak_tumpuan_mm: '', jarak_lapangan_mm: '', kaki: 2, hook_sudut: 135 } };
+  renderElemEditor();
+}
+
+function tplBlockHtml(nama, t, editable = true) {
+  const tul = (t.tulangan || []).map((x, i) => `
+    <div class="tul-row">
+      <select class="t-pos"><option value="atas" ${x.posisi === 'atas' ? 'selected' : ''}>atas</option>
+        <option value="bawah" ${x.posisi === 'bawah' ? 'selected' : ''}>bawah</option>
+        <option value="pinggang" ${x.posisi === 'pinggang' ? 'selected' : ''}>pinggang</option></select>
+      <input class="t-dia" type="number" value="${x.dia}" placeholder="Ø">
+      <input class="t-jum" type="number" value="${x.jumlah}" placeholder="jml">
+      <label class="wiz-hint"><input class="t-dua" type="checkbox" ${x.tumpuan_kedua_ujung ? 'checked' : ''}> 2 ujung</label>
+      <button class="del" onclick="this.closest('.tul-row').remove()">✕</button>
+    </div>`).join('');
+  const sk = t.sengkang || {};
+  return `<div class="tpl-block">
+    <button class="del" onclick="this.closest('.tpl-block').remove()">✕ hapus tipe</button>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Nama tipe</label><input class="t-nama" value="${esc(nama)}"></div>
+      <div class="wiz-field"><label>Deskripsi</label><input class="t-desk" value="${esc(t.deskripsi || '')}"></div>
+      <div class="wiz-field"><label>b (mm)</label><input class="t-b" type="number" value="${t.b_mm}"></div>
+      <div class="wiz-field"><label>h (mm)</label><input class="t-h" type="number" value="${t.h_mm}"></div>
+    </div>
+    <div class="wiz-hint">Tulangan</div>
+    <div class="tul-list">${tul}</div>
+    <button class="btn" onclick="elemAddTul(this)">+ tulangan</button>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Sengkang Ø</label><input class="t-skdia" type="number" value="${sk.dia || ''}"></div>
+      <div class="wiz-field"><label>Jarak tumpuan (mm)</label><input class="t-skt" type="number" value="${sk.jarak_tumpuan_mm || ''}"></div>
+      <div class="wiz-field"><label>Jarak lapangan (mm)</label><input class="t-skl" type="number" value="${sk.jarak_lapangan_mm || ''}"></div>
+      <div class="wiz-field"><label>Kaki</label><input class="t-skkaki" type="number" value="${sk.kaki || 2}"></div>
+      <div class="wiz-field"><label>Hook sudut</label><select class="t-skhook">
+        <option value="135" ${sk.hook_sudut === 135 ? 'selected' : ''}>135°</option>
+        <option value="90" ${sk.hook_sudut === 90 ? 'selected' : ''}>90°</option></select></div>
+    </div>
+  </div>`;
+}
+
+function elemAddTul(btn) {
+  const list = btn.closest('.tpl-block').querySelector('.tul-list');
+  const div = document.createElement('div');
+  div.className = 'tul-row';
+  div.innerHTML = `<select class="t-pos"><option>atas</option><option>bawah</option><option>pinggang</option></select>
+    <input class="t-dia" type="number" placeholder="Ø"><input class="t-jum" type="number" placeholder="jml">
+    <label class="wiz-hint"><input class="t-dua" type="checkbox" checked> 2 ujung</label>
+    <button class="del" onclick="this.closest('.tul-row').remove()">✕</button>`;
+  list.appendChild(div);
+}
+
+async function elemSave() {
+  const tpls = {};
+  document.querySelectorAll('#elemModalBody .tpl-block').forEach(block => {
+    const nama = block.querySelector('.t-nama').value.trim();
+    if (!nama) return;
+    const tulangan = [];
+    block.querySelectorAll('.tul-list .tul-row').forEach(row => {
+      const dia = +row.querySelector('.t-dia').value;
+      const jum = +row.querySelector('.t-jum').value;
+      if (dia && jum) tulangan.push({
+        posisi: row.querySelector('.t-pos').value, dia, jumlah: jum,
+        tumpuan_kedua_ujung: row.querySelector('.t-dua').checked });
+    });
+    tpls[nama] = {
+      deskripsi: block.querySelector('.t-desk').value,
+      b_mm: +block.querySelector('.t-b').value,
+      h_mm: +block.querySelector('.t-h').value,
+      tulangan,
+      sengkang: { dia: +block.querySelector('.t-skdia').value,
+                  jarak_tumpuan_mm: +block.querySelector('.t-skt').value,
+                  jarak_lapangan_mm: +block.querySelector('.t-skl').value,
+                  kaki: +block.querySelector('.t-skkaki').value,
+                  hook_sudut: +block.querySelector('.t-skhook').value },
+    };
+  });
+  if (!Object.keys(tpls).length) { alert('Minimal satu tipe elemen.'); return; }
+  const res = await fetch(`/api/projects/${proyekAktif}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kode: proyekAktif, config: proyekDefault, templates: { balok: tpls } })
+  });
+  const d = await res.json();
+  if (!d.ok) { alert(d.error || 'Gagal simpan'); return; }
+  elemModalClose();
+  // muat ulang panel elemen
+  const gd = await (await fetch(`/api/projects/${proyekAktif}/drawings/${gambarAktif}`)).json();
+  if (gd.ok) { templates = gd.templates; proyekRaw.templates = gd.templates; }
+  renderElemSummary();
+  renderSetupProgress();
+}
+
+$('elemSave').onclick = elemSave;
+$('btnKelolaElem').onclick = bukaEditorElemen;
+
+// ── editor parameter proyek (PATCH-05 §6) ──────────────────
+function bukaEditorParam() {
+  if (!proyekBerlapis || !proyekDefault) { alert('Proyek belum berlapis.'); return; }
+  $('paramModal').style.display = 'flex';
+  const c = proyekDefault;
+  const dias = Object.keys(c.panjang_penyaluran_mm || {}).map(Number)
+    .concat(Object.keys(c.unit_weight_kg_per_m || {})).filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b);
+  const rows = dias.map(d => `
+    <tr data-dia="${d}">
+      <td><b>D${d}</b></td>
+      <td><input class="p-ld" type="number" value="${c.panjang_penyaluran_mm[d] || ''}"></td>
+      <td><input class="p-lap" type="number" value="${c.lap_splice_mm[d] || ''}"></td>
+      <td><input class="p-uw" type="number" step="0.001" value="${c.unit_weight_kg_per_m[d] ?? ''}"></td>
+      <td><input class="p-h135" type="number" value="${c.hook.tail_135_mm[d] || ''}"></td>
+      <td><input class="p-h90" type="number" value="${c.hook.tail_90_mm[d] || ''}"></td>
+    </tr>`).join('');
+  $('paramModalBody').innerHTML = `
+    <div class="wiz-warn" style="margin-top:0">Mengubah nilai proyek — berlaku untuk semua gambar yang tidak punya nilai sendiri.
+      Kalau gambar punya nilai sendiri, yang itu yang dipakai.</div>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Panjang stok (mm)</label>
+        <input id="pPanjang" type="number" value="${c.stok.panjang_batang_mm}"></div>
+      <div class="wiz-field"><label>Kerf (mm)</label>
+        <input id="pKerf" type="number" value="${c.stok.kerf_mm}"></div>
+      <div class="wiz-field"><label>Sisa min (mm)</label>
+        <input id="pSisa" type="number" value="${c.stok.sisa_min_simpan_mm}"></div>
+      <div class="wiz-field"><label>Cover balok</label>
+        <input id="pCoverB" type="number" value="${c.selimut_beton_mm.balok || ''}"></div>
+      <div class="wiz-field"><label>Cover kolom</label>
+        <input id="pCoverK" type="number" value="${c.selimut_beton_mm.kolom || ''}"></div>
+      <div class="wiz-field"><label>Cover plat</label>
+        <input id="pCoverP" type="number" value="${c.selimut_beton_mm.plat || ''}"></div>
+    </div>
+    <table class="dia-table"><thead><tr>
+      <th>Ø</th><th>Ld</th><th>Lap</th><th>UW</th><th>H135</th><th>H90</th></tr></thead>
+      <tbody id="paramDia">${rows}</tbody></table>
+    <button class="btn" onclick="paramAddDia()">+ diameter</button>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Zona tumpuan</label>
+        <input id="pZona" type="number" step="0.05" value="${c.sengkang.zona_tumpuan_faktor}"></div>
+      <div class="wiz-field"><label>Sengkang pertama</label>
+        <input id="pPertama" type="number" value="${c.sengkang.jarak_sengkang_pertama_mm}"></div>
+      <div class="wiz-field"><label>Metode</label>
+        <select id="pMetode"><option value="kontinyu" ${c.sengkang.metode_hitung === 'kontinyu' ? 'selected' : ''}>kontinyu</option>
+        <option value="per_zona" ${c.sengkang.metode_hitung === 'per_zona' ? 'selected' : ''}>per_zona</option></select></div>
+    </div>`;
+}
+function paramModalClose() { $('paramModal').style.display = 'none'; }
+function paramAddDia() {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input class="p-dia" type="number" placeholder="Ø"></td>
+    <td><input class="p-ld" type="number"></td><td><input class="p-lap" type="number"></td>
+    <td><input class="p-uw" type="number" step="0.001"></td>
+    <td><input class="p-h135" type="number"></td><td><input class="p-h90" type="number"></td>`;
+  $('paramDia').appendChild(tr);
+}
+
+async function paramSave() {
+  const c = JSON.parse(JSON.stringify(proyekDefault));
+  c.stok.panjang_batang_mm = +$('pPanjang').value;
+  c.stok.kerf_mm = +$('pKerf').value;
+  c.stok.sisa_min_simpan_mm = +$('pSisa').value;
+  c.selimut_beton_mm = { balok: +$('pCoverB').value, kolom: +$('pCoverK').value, plat: +$('pCoverP').value };
+  const ld = {}, lap = {}, uw = {}, h135 = {}, h90 = {};
+  document.querySelectorAll('#paramDia tr').forEach(tr => {
+    const diaInput = tr.querySelector('.p-dia');
+    const diaRaw = (tr.querySelector('b') || {}).textContent || '';
+    const dia = diaInput && diaInput.value !== '' ? +diaInput.value
+               : (parseInt(diaRaw.replace('D', '')) || NaN);
+    if (!isNaN(dia)) {
+      const v = (sel) => { const x = tr.querySelector(sel); return x && x.value !== '' ? +x.value : undefined; };
+      const a = v('.p-ld'); if (a) ld[dia] = a;
+      const b = v('.p-lap'); if (b) lap[dia] = b;
+      const u = v('.p-uw'); if (u) uw[dia] = u;
+      const h1 = v('.p-h135'); if (h1) h135[dia] = h1;
+      const h2 = v('.p-h90'); if (h2) h90[dia] = h2;
+    }
+  });
+  c.panjang_penyaluran_mm = ld;
+  c.lap_splice_mm = lap;
+  c.unit_weight_kg_per_m = uw;
+  c.hook.tail_135_mm = h135;
+  c.hook.tail_90_mm = h90;
+  c.sengkang.zona_tumpuan_faktor = +$('pZona').value;
+  c.sengkang.jarak_sengkang_pertama_mm = +$('pPertama').value;
+  c.sengkang.metode_hitung = $('pMetode').value;
+
+  // revisi wajib kalau nilai teknis proyek berubah
+  const sig = (x) => JSON.stringify(x);
+  const oldProj = proyekDefault;
+  const teknisBerubah = sig(c.panjang_penyaluran_mm) !== sig(oldProj.panjang_penyaluran_mm)
+    || sig(c.selimut_beton_mm) !== sig(oldProj.selimut_beton_mm)
+    || sig(c.hook) !== sig(oldProj.hook)
+    || sig(c.sengkang) !== sig(oldProj.sengkang)
+    || (c.stok || {}).panjang_batang_mm !== (oldProj.stok || {}).panjang_batang_mm;
+  const revisi = prompt(teknisBerubah
+    ? 'Nilai teknis proyek berubah — revisi gambar wajib diisi:'
+    : 'Revisi gambar (biarkan kosong kalau tidak berubah):', oldProj.sumber.revisi || '');
+  if (revisi === null) return;
+  if (teknisBerubah && revisi.trim() === oldProj.sumber.revisi) {
+    alert('Revisi harus berbeda kalau nilai teknis berubah.'); return;
+  }
+  c.sumber.revisi = revisi.trim() || oldProj.sumber.revisi;
+
+  // templates proyek fresh — format berlapis {balok: {...}} dari GET proyek,
+  // bukan flat dari GET drawing (PATCH-05 §6)
+  let tplProyek = proyekRaw.templates;
+  try {
+    const pf = await (await fetch(`/api/projects/${proyekAktif}`)).json();
+    if (pf.ok && pf.templates) tplProyek = pf.templates;
+  } catch (_e) { /* pakai fallback */ }
+  if (tplProyek && !tplProyek.balok) tplProyek = { balok: tplProyek };
+
+  const res = await fetch(`/api/projects/${proyekAktif}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kode: proyekAktif, config: c, templates: tplProyek })
+  });
+  const d = await res.json();
+  if (!d.ok) { alert(d.error || 'Gagal simpan'); return; }
+  paramModalClose();
+  await pilihProyek(proyekAktif);
+}
+
+$('paramSave').onclick = paramSave;
+$('btnParamProyek').onclick = bukaEditorParam;
 
 // ── tab ────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {

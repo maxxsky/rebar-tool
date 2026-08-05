@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rebar BBS — Verifikasi</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/app.css?v=7">
 </head>
 <body>
 
@@ -27,7 +27,11 @@
 <div class="layout">
   <div class="col-left">
     <div class="panel">
-      <div class="panel-title">ELEMEN</div>
+      <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>ELEMEN</span>
+        <button id="btnKelolaElem" class="btn" style="padding:3px 10px;font-size:11px" title="Kelola tipe elemen proyek">Kelola elemen</button>
+      </div>
+      <div id="elemSummary" class="elem-summary"></div>
       <div class="hint">Bentang bersih — muka ke muka tumpuan, bukan as-ke-as.</div>
       <div id="rowHead" class="row-head">
         <span>tipe</span><span>bentang (mm)</span><span>jml</span><span></span>
@@ -65,6 +69,7 @@
       <div id="paramBody" class="param-body">…</div>
       <div id="paramActions" class="param-actions" style="display:none">
         <button id="btnParamEdit" class="btn">✎ Edit</button>
+        <button id="btnParamProyek" class="btn" title="Edit nilai proyek — berlaku untuk semua gambar yang tidak punya nilai sendiri">Edit parameter proyek</button>
         <button id="btnParamYaml" class="btn">Unduh YAML</button>
       </div>
       <div id="paramForm" style="display:none"></div>
@@ -99,6 +104,36 @@
   </div>
 </div>
 
-<script src="/static/app.js"></script>
+<!-- Editor elemen (PATCH-05 §5) -->
+<div id="elemModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>Kelola elemen — template proyek</span>
+      <button class="del" onclick="elemModalClose()">✕</button>
+    </div>
+    <div class="modal-body" id="elemModalBody"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="elemModalClose()">Batal</button>
+      <button class="btn primary" id="elemSave">Simpan elemen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Editor parameter proyek (PATCH-05 §6) -->
+<div id="paramModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>Edit parameter proyek</span>
+      <button class="del" onclick="paramModalClose()">✕</button>
+    </div>
+    <div class="modal-body" id="paramModalBody"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="paramModalClose()">Batal</button>
+      <button class="btn primary" id="paramSave">Simpan proyek</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>

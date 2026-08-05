@@ -274,5 +274,5 @@ def api_export():
 
 
 if __name__ == "__main__":
-    # 07-SPEC-webui: bind 127.0.0.1 port 8097 — bukan 0.0.0.0
-    app.run(host="127.0.0.1", port=8097, debug=False)
+    # Bind 0.0.0.0 — akses dari luar via VPS_IP:8097 (Brahma request, 2026-08-05)
+    app.run(host="0.0.0.0", port=8097, debug=False)

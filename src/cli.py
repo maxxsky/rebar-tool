@@ -82,6 +82,7 @@ def cmd_bbs(args):
     elemen = baca_elemen_xlsx(args.input, templates)
     cuts = generate_bbs(templates, elemen, cfg)
     agg = agregasi(cuts)
+    hasil_opt = optimize_all(agg, cfg)
 
     print(f"=== BBS — {cfg.nama} ({cfg.kode}) ===")
     print(f"sumber: {cfg.sumber.dokumen} {cfg.sumber.revisi} — {cfg.sumber.tanggal}")
@@ -90,6 +91,21 @@ def cmd_bbs(args):
     print(f"{'dia':>4} {'panjang':>8} {'jumlah':>6}  bar_mark")
     for c in agg:
         print(f"{c.dia:>4} {c.panjang_mm:>8} {c.jumlah:>6}  {c.bar_mark or '-'}")
+    print()
+    for dia, r in sorted(hasil_opt.items()):
+        print(_fmt_metrik(r))
+
+    # ── export Excel ──
+    if not args.no_export:
+        from datetime import datetime
+        from export import generate_excel
+        ts = datetime.now().strftime("%Y%m%d-%H%M")
+        out_dir = args.output
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"BBS_{cfg.kode}_{ts}.xlsx"
+        generate_excel(cfg, elemen, cuts, hasil_opt, args.config, out_path)
+        print()
+        print(f"Excel: {out_path}")
     return 0
 
 
@@ -104,9 +120,11 @@ def main():
                     help="lewati pembatasan pola (bandingkan)")
     po.set_defaults(fn=cmd_optimize)
 
-    pb = sub.add_parser("bbs", help="generate BBS dari elemen.xlsx")
+    pb = sub.add_parser("bbs", help="generate BBS + optimizer + export Excel")
     pb.add_argument("input", type=Path, nargs="?", default=Path("input/elemen.xlsx"))
     pb.add_argument("--config", type=Path, default=Path("config"))
+    pb.add_argument("--output", type=Path, default=Path("output"))
+    pb.add_argument("--no-export", action="store_true", help="tanpa Excel")
     pb.set_defaults(fn=cmd_bbs)
 
     args = parser.parse_args()

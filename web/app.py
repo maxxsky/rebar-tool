@@ -255,7 +255,8 @@ def _bbs_dict(c):
 def _hitung(cfg, templates, elemen, gambar_kode=None):
     """Inti perhitungan — modul yang SAMA dengan CLI.
 
-    gambar_kode: prefix bar_mark (08-SPEC §4.3) — bar mark jadi "GS-02/B1-A".
+    gambar_kode: prefix bar_mark (08 §4.3) — diterapkan DI bbs.generate_bbs
+    supaya web & CLI konsisten (PATCH-03 #3).
     """
     # validasi tipe
     for el in elemen:
@@ -263,11 +264,7 @@ def _hitung(cfg, templates, elemen, gambar_kode=None):
             raise ConfigError(
                 f"Tipe '{el.tipe}' tidak ada di templates.yaml. "
                 f"Tersedia: {', '.join(sorted(templates))}")
-    cuts = generate_bbs(templates, elemen, cfg)
-    if gambar_kode:
-        import dataclasses
-        cuts = [dataclasses.replace(c, bar_mark=f"{gambar_kode}/{c.bar_mark}")
-                for c in cuts]
+    cuts = generate_bbs(templates, elemen, cfg, gambar_kode=gambar_kode)
     agg = agregasi(cuts)
     hasil_opt = optimize_all(agg, cfg)
     return cuts, agg, hasil_opt

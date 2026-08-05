@@ -71,11 +71,19 @@ def cmd_optimize(args):
 
 
 def cmd_bbs(args):
-    cfg, templates = load_all(args.config)
+    from config_loader import load_all, load_layered
+    if args.proyek and args.gambar:
+        cfg, templates, info = load_layered(Path(args.config) / "projects",
+                                            args.proyek, args.gambar)
+        gambar_kode = info["kode"]
+        print(f"gambar: {gambar_kode} {info['revisi']} — {info['nama']}")
+    else:
+        cfg, templates = load_all(args.config)
+        gambar_kode = None
     for w in cfg.warnings:
         print(w)
     elemen = baca_elemen_xlsx(args.input, templates)
-    cuts = generate_bbs(templates, elemen, cfg)
+    cuts = generate_bbs(templates, elemen, cfg, gambar_kode=gambar_kode)
     agg = agregasi(cuts)
     hasil_opt = optimize_all(agg, cfg)
 
@@ -104,6 +112,52 @@ def cmd_bbs(args):
     return 0
 
 
+def cmd_fix_gambar_kode(args):
+    """Perbaiki kode gambar hasil migrasi lama (PATCH-03 #2).
+
+    Scan projects/*/drawings/*.yaml; kalau _meta.dibuat_via=migrasi dan
+    kode == nama proyek (salah), ekstrak kode gambar dari sumber.dokumen
+    dan rename. Kalau pola tidak ketemu → kode MIGRASI + catatan.
+    """
+    import yaml
+    from config_loader import _ekstrak_kode_gambar, _ekstrak_nama_gambar
+    base = Path(args.config) / "projects"
+    fixed = 0
+    for proj_dir in sorted(base.glob("*/")):
+        proj = proj_dir.name
+        if not (proj_dir / "project.yaml").exists():
+            continue  # folder non-proyek (mis. _arsip)
+        proj_cfg = yaml.safe_load((proj_dir / "project.yaml").read_text())
+        dokumen = str((proj_cfg.get("sumber") or {}).get("dokumen", ""))
+        for draw in sorted((proj_dir / "drawings").glob("*.yaml")):
+            d = yaml.safe_load(draw.read_text()) or {}
+            meta = d.get("_meta") or {}
+            if meta.get("dibuat_via") != "migrasi":
+                continue
+            if d.get("kode") != proj:
+                continue  # bukan hasil migrasi yang salah
+            gkode = _ekstrak_kode_gambar(dokumen)
+            gnama = _ekstrak_nama_gambar(dokumen) or proj
+            catat = ""
+            if gkode is None:
+                gkode = "MIGRASI"
+                catat = ("Kode gambar tidak terdeteksi dari sumber.dokumen "
+                         "— ganti manual dengan kode gambar yang benar.")
+            d["kode"] = gkode
+            d["nama"] = gnama
+            if catat:
+                d.setdefault("_meta", {})["catatan_migrasi"] = catat
+            new_path = draw.parent / f"{gkode}.yaml"
+            if new_path != draw:
+                draw.rename(new_path)
+            new_path.write_text(yaml.safe_dump(d, allow_unicode=True))
+            print(f"{proj}: {draw.name} → {new_path.name} "
+                  f"(kode={gkode}, nama={gnama})")
+            fixed += 1
+    print(f"selesai: {fixed} gambar diperbaiki.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="rebar-tool")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -116,9 +170,16 @@ def main():
     pb = sub.add_parser("bbs", help="generate BBS + optimizer + export Excel")
     pb.add_argument("input", type=Path, nargs="?", default=Path("input/elemen.xlsx"))
     pb.add_argument("--config", type=Path, default=Path("config"))
+    pb.add_argument("--proyek", help="kode proyek (berlapis, 08)")
+    pb.add_argument("--gambar", help="kode gambar (berlapis, 08)")
     pb.add_argument("--output", type=Path, default=Path("output"))
     pb.add_argument("--no-export", action="store_true", help="tanpa Excel")
     pb.set_defaults(fn=cmd_bbs)
+
+    pf = sub.add_parser("fix-gambar-kode",
+                        help="perbaiki kode gambar hasil migrasi lama (PATCH-03)")
+    pf.add_argument("--config", type=Path, default=Path("config"))
+    pf.set_defaults(fn=cmd_fix_gambar_kode)
 
     args = parser.parse_args()
     sys.exit(args.fn(args))

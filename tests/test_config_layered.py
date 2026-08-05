@@ -152,9 +152,39 @@ def test_migrasi_berlapis(tmp_path):
     assert (pdir / "templates.yaml").exists()
     draws = list_drawings(cfgdir / "projects", "PRJ-001")
     assert len(draws) == 1
-    assert draws[0]["kode"] == "PRJ-001"
+    # PATCH-03 #2: kode gambar diekstrak dari sumber.dokumen ("Gambar Struktur GS-01")
+    assert draws[0]["kode"] == "GS-01"
+    assert draws[0]["nama"] == "Gambar Struktur"
+    assert draws[0]["revisi"] == "Rev.3"
     # migrasi kedua → no-op
     assert migrate_legacy_layered(cfgdir) is False
+
+
+def test_ekstrak_kode_gambar():
+    from config_loader import _ekstrak_kode_gambar, _ekstrak_nama_gambar
+    assert _ekstrak_kode_gambar("Gambar Struktur GS-01") == "GS-01"
+    assert _ekstrak_kode_gambar("GS-02 Basement Rev.2") == "GS-02"
+    assert _ekstrak_kode_gambar("Struktur Atas") is None   # tidak ada pola
+    assert _ekstrak_nama_gambar("Gambar Struktur GS-01") == "Gambar Struktur"
+    assert _ekstrak_nama_gambar("Struktur Atas") == "Struktur Atas"
+
+
+def test_migrasi_tanpa_kode_gambar_pakai_MIGRASI(tmp_path):
+    """Kalau sumber.dokumen tidak ada pola kode → kode MIGRASI + catatan."""
+    cfgdir = tmp_path / "config"
+    cfgdir.mkdir()
+    import yaml
+    data = yaml.safe_load(open(CONFIG_DIR / "project.yaml"))
+    data["sumber"]["dokumen"] = "Gambar Struktur Atas"  # tanpa kode
+    (cfgdir / "project.yaml").write_text(yaml.safe_dump(data))
+    (cfgdir / "templates.yaml").write_text(
+        (CONFIG_DIR / "templates.yaml").read_text())
+    migrate_legacy_layered(cfgdir)
+    draw_f = cfgdir / "projects" / "PRJ-001" / "drawings" / "MIGRASI.yaml"
+    assert draw_f.exists()
+    d = yaml.safe_load(draw_f.read_text())
+    assert d["kode"] == "MIGRASI"
+    assert "catatan_migrasi" in d["_meta"]
 
 
 # ── endpoint drawings ──────────────────────────────────────

@@ -148,7 +148,31 @@ def test_agregasi_menggabungkan_identik(cfg, templates):
     assert len(by_key) == 3  # D19/7520 (atas+bawah), D13/7040, D10/1640
 
 
-# ── koreksi bengkokan ──────────────────────────────────────
+# ── prefix gambar bar_mark (PATCH-03 #3 — web == CLI) ─────
+def test_bar_mark_prefix_gambar(cfg, templates):
+    elemen = [ElemenInput(tipe="B1", bentang_bersih_mm=6000, jumlah=1,
+                          lokasi="x")]
+    # dengan gambar_kode → prefix
+    cuts = generate_bbs(templates, elemen, cfg, gambar_kode="GS-01")
+    assert all(c.bar_mark.startswith("GS-01/") for c in cuts)
+    assert any(c.bar_mark == "GS-01/B1-SK" for c in cuts)
+    assert any(c.bar_mark == "GS-01/B1-A1" for c in cuts)
+    # tanpa argumen → tanpa prefix (legacy)
+    cuts2 = generate_bbs(templates, elemen, cfg)
+    assert all(not c.bar_mark.startswith("GS-01/") for c in cuts2)
+    assert any(c.bar_mark == "B1-SK" for c in cuts2)
+
+
+def test_bar_mark_web_cli_konsisten(cfg, templates):
+    """Input sama → bar mark identik (generate_bbs dipakai web & CLI)."""
+    elemen = [ElemenInput(tipe="B1", bentang_bersih_mm=6000, jumlah=1,
+                          lokasi="x")]
+    cuts = generate_bbs(templates, elemen, cfg, gambar_kode="GS-02")
+    marks = {c.bar_mark for c in cuts}
+    # CLI yang dipanggil dengan --gambar GS-02 menghasilkan marks yang sama
+    assert "GS-02/B1-SK" in marks
+    assert "GS-02/B1-A1" in marks
+    assert len(marks) == 4  # A1, B2, P3, SK
 def test_koreksi_bengkokan_default_off(cfg):
     assert koreksi_bengkokan(10, cfg) == 0
 

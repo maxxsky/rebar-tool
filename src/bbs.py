@@ -121,20 +121,24 @@ def generate_sengkang(tpl: ElementTemplate, bentang: int, cfg: ProjectConfig,
 
 # ── generate satu elemen ────────────────────────────────────
 def generate_elemen(tpl: ElementTemplate, elemen: ElemenInput,
-                    cfg: ProjectConfig) -> list[Cut]:
-    """Semua Cut untuk satu kelompok elemen identik."""
+                    cfg: ProjectConfig, gambar_kode=None) -> list[Cut]:
+    """Semua Cut untuk satu kelompok elemen identik.
+
+    gambar_kode: prefix bar mark (08 §4.3) — "GS-02/B1-A". None = tanpa prefix.
+    """
     bentang = elemen.bentang_bersih_mm
     lokasi = elemen.lokasi
+    prefix = f"{gambar_kode}/" if gambar_kode else ""
     out: list[Cut] = []
 
     for i, tul in enumerate(tpl.tulangan):
-        bar_mark = f"{tpl.nama}-{tul.posisi[0].upper()}{i + 1}"
+        bar_mark = f"{prefix}{tpl.nama}-{tul.posisi[0].upper()}{i + 1}"
         meta = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
                      lokasi=lokasi, bar_mark=bar_mark, posisi=tul.posisi)
         out.append(generate_tulangan_utama(tul, bentang, cfg, meta))
 
     meta_sk = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
-                    lokasi=lokasi, bar_mark=f"{tpl.nama}-SK",
+                    lokasi=lokasi, bar_mark=f"{prefix}{tpl.nama}-SK",
                     posisi="sengkang")
     out.append(generate_sengkang(tpl, bentang, cfg, meta_sk))
     return out
@@ -154,8 +158,12 @@ class _Meta:
 # ── generate semua elemen + agregasi ────────────────────────
 def generate_bbs(templates: dict[str, ElementTemplate],
                  elemen_list: list[ElemenInput],
-                 cfg: ProjectConfig) -> list[Cut]:
-    """Semua Cut dari semua elemen (belum diagregasi)."""
+                 cfg: ProjectConfig, gambar_kode=None) -> list[Cut]:
+    """Semua Cut dari semua elemen (belum diagregasi).
+
+    gambar_kode: prefix bar mark (08 §4.3) — web & CLI konsisten.
+    None = tanpa prefix (pemakaian legacy load_all).
+    """
     out: list[Cut] = []
     for el in elemen_list:
         if el.tipe not in templates:
@@ -163,7 +171,7 @@ def generate_bbs(templates: dict[str, ElementTemplate],
                 f"Tipe '{el.tipe}' tidak ada di templates.yaml. "
                 f"Tipe yang dikenal: {', '.join(sorted(templates))}")
         tpl = templates[el.tipe]
-        out.extend(generate_elemen(tpl, el, cfg))
+        out.extend(generate_elemen(tpl, el, cfg, gambar_kode=gambar_kode))
     return out
 
 

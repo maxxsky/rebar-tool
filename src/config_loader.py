@@ -509,8 +509,11 @@ def migrate_legacy_layered(config_dir):
 
     - project.yaml → projects/{kode}/project.yaml
     - templates.yaml → projects/{kode}/templates.yaml
-    - drawings/{kode_sumber}.yaml (override kosong, metadata dari blok sumber)
+    - drawings/{kode_gambar}.yaml — kode gambar diekstrak dari sumber.dokumen
+      (mis. "Gambar Struktur GS-01" → kode GS-01, nama "Gambar Struktur").
+      Kalau pola kode tidak ketemu → kode "MIGRASI" + _meta.catatan_migrasi.
     """
+    import re as _re
     import yaml
     config_dir = Path(config_dir)
     proj_file = config_dir / "project.yaml"
@@ -533,20 +536,56 @@ def migrate_legacy_layered(config_dir):
     (pdir / "templates.yaml").write_text(meta +
         (config_dir / "templates.yaml").read_text())
 
-    # gambar dari blok sumber
+    # gambar dari blok sumber — kode diekstrak dari sumber.dokumen
     sumber = data.get("sumber") or {}
+    dokumen = str(sumber.get("dokumen", ""))
+    gkode = _ekstrak_kode_gambar(dokumen)
+    gnama = _ekstrak_nama_gambar(dokumen) or (gkode or "Migrasi otomatis")
+    catatan_migrasi = ""
+    if gkode is None:
+        gkode = "MIGRASI"
+        catatan_migrasi = ("Kode gambar tidak terdeteksi dari sumber.dokumen "
+                           "— ganti manual dengan kode gambar yang benar.")
     drawing = {
-        "kode": kode,
-        "nama": "Migrasi otomatis",
+        "kode": gkode,
+        "nama": gnama,
         "revisi": str(sumber.get("revisi", "")),
         "tanggal": str(sumber.get("tanggal", "")),
         "catatan": str(sumber.get("catatan", "")),
         "override": {},
         "_meta": {"dibuat_via": "migrasi", "dibuat_pada": ts},
     }
-    (pdir / "drawings" / f"{kode}.yaml").write_text(
+    if catatan_migrasi:
+        drawing["_meta"]["catatan_migrasi"] = catatan_migrasi
+    (pdir / "drawings" / f"{gkode}.yaml").write_text(
         yaml.safe_dump(drawing, allow_unicode=True))
     return True
+
+
+def _ekstrak_kode_gambar(dokumen: str):
+    """Token berpola kode gambar (huruf-angka dengan hubung, mis. GS-01).
+
+    Return kode uppercase atau None kalau tidak ketemu.
+    """
+    import re as _re
+    if not dokumen:
+        return None
+    m = _re.search(r"\b([A-Za-z]{1,4}-\d{1,4})\b", dokumen)
+    return m.group(1).upper() if m else None
+
+
+def _ekstrak_nama_gambar(dokumen: str):
+    """Nama gambar = bagian sebelum kode gambar, di-strip.
+
+    "Gambar Struktur GS-01" → "Gambar Struktur". Return "" kalau kosong.
+    """
+    import re as _re
+    if not dokumen:
+        return ""
+    m = _re.search(r"\b[A-Za-z]{1,4}-\d{1,4}\b", dokumen)
+    if m:
+        return dokumen[: m.start()].strip()
+    return dokumen.strip()
 
 
 def load_project(projects_dir, kode) -> tuple[ProjectConfig, dict[str, ElementTemplate]]:

@@ -1,0 +1,90 @@
+/* Rebar BBS web — alat verifikasi F4. Kontras cukup, angka tabular-nums. */
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, sans-serif;
+       background: #f4f5f7; color: #1d232b; }
+code { font-family: ui-monospace, 'JetBrains Mono', monospace; }
+
+#warnBanner { display: none; background: #fff3cd; border-bottom: 1px solid #d9a514;
+              padding: 8px 16px; font-size: 13px; }
+#warnBanner.show { display: block; }
+
+.layout { display: grid; grid-template-columns: 400px 1fr; gap: 16px;
+          padding: 16px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+h1 { font-size: 20px; margin: 0 0 2px; }
+.sub { font-size: 12px; color: #5b6572; margin-bottom: 14px; }
+
+.panel { background: #fff; border: 1px solid #dfe3e8; border-radius: 8px;
+         padding: 12px; margin-bottom: 12px; }
+.panel-title { font-size: 11px; font-weight: 700; letter-spacing: 1px;
+               color: #4a5560; margin-bottom: 8px; }
+.panel-title .hint { font-weight: 400; letter-spacing: 0; color: #8a939e; }
+
+.row-head { display: grid; grid-template-columns: 100px 1fr 70px 30px; gap: 6px;
+            font-size: 10px; color: #8a939e; margin-bottom: 4px; }
+.elem-row { display: grid; grid-template-columns: 100px 1fr 70px 30px; gap: 6px;
+            margin-bottom: 6px; }
+.elem-row input, .elem-row select { width: 100%; padding: 6px 8px; font-size: 13px;
+            border: 1px solid #cbd2d9; border-radius: 6px; background: #fff; }
+.elem-row .del { border: none; background: none; color: #b4232c; font-size: 16px;
+                 cursor: pointer; }
+
+.ovr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ovr-grid label { display: flex; flex-direction: column; font-size: 11px;
+                  color: #5b6572; gap: 3px; }
+.ovr-grid input, .ovr-grid select { padding: 6px 8px; font-size: 13px;
+                  border: 1px solid #cbd2d9; border-radius: 6px; }
+.ovr-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+.btn { padding: 8px 16px; border: 1px solid #cbd2d9; border-radius: 6px;
+       background: #fff; cursor: pointer; font-size: 13px; }
+.btn.primary { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+
+.param-body { font-family: ui-monospace, monospace; font-size: 11.5px;
+              line-height: 1.6; color: #2b3440; white-space: pre-wrap; }
+.param-body .ovr-flag { color: #d97706; font-weight: 700; }
+
+/* ── hasil ── */
+.stats { display: flex; gap: 24px; background: #fff; border: 1px solid #dfe3e8;
+         border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; flex-wrap: wrap; }
+.stat b { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;
+          font-size: 18px; display: block; }
+.stat span { font-size: 11px; color: #5b6572; }
+
+.tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.tab { padding: 8px 18px; border: 1px solid #dfe3e8; background: #fff;
+       border-radius: 6px 6px 0 0; cursor: pointer; font-size: 13px; }
+.tab.active { border-bottom-color: #fff; font-weight: 700; }
+
+.tab-body { background: #fff; border: 1px solid #dfe3e8; border-radius: 0 8px 8px 8px;
+            padding: 14px; overflow-x: auto; min-height: 200px; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-size: 11px; color: #5b6572; padding: 6px 10px;
+     border-bottom: 2px solid #dfe3e8; }
+td { padding: 6px 10px; border-bottom: 1px solid #edf0f3; }
+.num { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;
+       text-align: right; }
+tr.total td { font-weight: 700; border-top: 2px solid #dfe3e8; }
+
+/* pola potong */
+.dia-block { margin-bottom: 18px; }
+.dia-head { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+.dia-head .warn-flag { color: #b4232c; font-weight: 800; }
+.dia-meta { font-size: 11.5px; color: #5b6572; margin-bottom: 8px;
+            font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.pola { margin-bottom: 10px; }
+.pola-label { font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.bar { display: flex; height: 26px; border: 1px solid #cbd2d9; border-radius: 4px;
+       overflow: hidden; font-family: ui-monospace, monospace; font-size: 10px;
+       font-variant-numeric: tabular-nums; }
+.seg { display: flex; align-items: center; justify-content: center;
+       background: #dbeafe; border-right: 1px solid #fff; color: #1e3a8a;
+       overflow: hidden; white-space: nowrap; }
+.seg.kerf { background: #eef0f3; border: none; width: 2px; }
+.seg.sisa { color: #4a5560; background: repeating-linear-gradient(45deg, #d9d9d9,
+             #d9d9d9 4px, #ececec 4px, #ececec 8px); }
+.seg.sisa.buang { background: repeating-linear-gradient(45deg, #fce4ec,
+             #fce4ec 4px, #f8d7e0 4px, #f8d7e0 8px); color: #9b1c31; }

@@ -157,11 +157,18 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
     except ConfigError as e:
         errors.append(str(e))
         max_pola = 8
-    batasi = opt_raw.get("batasi_pola", True)
-    if not isinstance(batasi, bool):
+    batasi = opt_raw.get("batasi_pola", False)
+    if batasi is True:
+        errors.append(
+            "optimizer.batasi_pola=true ditolak (PATCH-01): pembatasan pola "
+            "dihapus dari optimizer. Pola 'SISA/CAMPURAN' tidak bisa dieksekusi "
+            "dan menyembunyikan batang tanpa pola. Set batasi_pola: false — "
+            "output pola yang panjang tapi benar lebih baik daripada daftar "
+            "pendek berisi instruksi mustahil.")
+    elif not isinstance(batasi, bool):
         errors.append(f"optimizer.batasi_pola harus boolean, dapat {batasi!r}")
-        batasi = True
-    optimizer_cfg = OptimizerConfig(max_pola=max_pola, batasi_pola=batasi)
+        batasi = False
+    optimizer_cfg = OptimizerConfig(max_pola=max_pola, batasi_pola=False)
 
     # ── koreksi bengkokan (spec 02 §3.1) — default OFF ──
     koreksi_bend = hook_raw.get("koreksi_bengkokan_aktif", False)

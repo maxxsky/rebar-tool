@@ -27,7 +27,7 @@ from optimizer import optimize, optimize_all
 CONFIG_DIR = REPO / "config"
 
 
-def _cfg(panjang=12000, kerf=0, sisa_min=1000, max_pola=8, batasi=True):
+def _cfg(panjang=12000, kerf=0, sisa_min=1000, max_pola=8, batasi=False):
     cfg, _ = load_all(CONFIG_DIR)
     import dataclasses
     return dataclasses.replace(
@@ -110,26 +110,67 @@ def test_kasus_e_potongan_lebih_dari_stok():
         optimize([_cut(10, 13000, 1)], _cfg())
 
 
-# ── F — pembatasan pola ────────────────────────────────────
-def test_kasus_f_pembatasan_pola():
+# ── F — PATCH-01: pembatasan pola dihapus — invariant kelayakan ──
+def test_patch01_semua_pola_layak_dieksekusi():
+    """Kasus yang gagal sebelum patch: pola 'SISA/CAMPURAN' 200.093 mm."""
     rng = random.Random(7)
     inputs = [_cut(16, rng.randint(800, 4000), rng.randint(1, 3))
               for _ in range(60)]
-    r = optimize(inputs, _cfg(kerf=2, max_pola=8, batasi=True))
-    assert r.pola_sesudah_batasi <= 8
-    # konservasi tetap
+    r = optimize(inputs, _cfg(kerf=2, max_pola=8, batasi=False))
+    # semua pola layak
+    for p in r.patterns:
+        n = len(p.potongan)
+        total = sum(p.potongan) + max(n - 1, 0) * 2
+        assert total <= 12000, f"pola tidak layak: {p.potongan} ({total} mm)"
+    # semua batang terwakili pola
+    assert sum(p.frekuensi for p in r.patterns) == r.total_batang
+    assert r.pola_sebelum_batasi == r.pola_sesudah_batasi == len(r.patterns)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_patch01_kelayakan_pola_banyak_seed(seed):
+    rng = random.Random(seed)
+    inputs = [_cut(13, rng.randint(500, 5000), rng.randint(1, 4))
+              for _ in range(50)]
+    r = optimize(inputs, _cfg(kerf=3, batasi=False))
+    for p in r.patterns:
+        n = len(p.potongan)
+        total = sum(p.potongan) + max(n - 1, 0) * 3
+        assert total <= 12000, f"seed {seed}: pola tidak layak {p.potongan}"
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_patch01_frekuensi_sama_dengan_total_batang(seed):
+    rng = random.Random(seed)
+    inputs = [_cut(16, rng.randint(800, 4500), rng.randint(1, 3))
+              for _ in range(40)]
+    r = optimize(inputs, _cfg(kerf=2, batasi=False))
+    assert sum(p.frekuensi for p in r.patterns) == r.total_batang
+
+
+def test_patch01_batasi_pola_true_ditolak_config(tmp_path):
+    """Config lama dengan batasi_pola:true → ditolak loader (fail loud)."""
+    import shutil
+    import yaml
+    d = Path(tmp_path)
+    shutil.copy(CONFIG_DIR / "templates.yaml", d / "templates.yaml")
+    data = yaml.safe_load(open(CONFIG_DIR / "project.yaml"))
+    data["optimizer"]["batasi_pola"] = True
+    (d / "project.yaml").write_text(yaml.safe_dump(data))
+    with pytest.raises(Exception) as exc:
+        load_all(d)
+    assert "batasi_pola" in str(exc.value)
+    assert "PATCH-01" in str(exc.value)
+
+
+def test_patch01_konservasi_tetap_terjaga():
+    rng = random.Random(11)
+    inputs = [_cut(10, rng.randint(500, 5000), rng.randint(1, 5))
+              for _ in range(60)]
+    r = optimize(inputs, _cfg(kerf=3, batasi=False))
     total_input = sum(c.panjang_mm * c.jumlah for c in inputs)
+    assert r.total_panjang_terpakai_mm == total_input
     assert _total_potongan_hasil(r) == total_input
-    # waste dengan pembatasan >= tanpa
-    assert r.waste_pct >= r.waste_pct_tanpa_batasi - 0.01
-
-
-def test_kasus_f_tanpa_batasi_sama_dengan_before():
-    rng = random.Random(7)
-    inputs = [_cut(16, rng.randint(800, 4000), rng.randint(1, 3))
-              for _ in range(60)]
-    r = optimize(inputs, _cfg(kerf=2, max_pola=8, batasi=True))
-    assert r.pola_sebelum_batasi >= r.pola_sesudah_batasi
 
 
 # ── G — sisa reusable ──────────────────────────────────────

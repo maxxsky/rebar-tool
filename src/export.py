@@ -151,7 +151,10 @@ def generate_excel(cfg: ProjectConfig, elemen_list, cuts_bbs,
 
     # ── Sheet 2: POLA POTONG ────────────────────────────────
     ws2 = wb.create_sheet("POLA POTONG")
-    r = _header(ws2, cfg, warnings)
+    r = _header(ws2, cfg, warnings,
+                extra_lines=("CATATAN: pola diurutkan frekuensi tertinggi. "
+                             "Jumlah pola belum dioptimasi utk kemudahan "
+                             "lapangan (PATCH-01).",))
     for dia in sorted(hasil_opt):
         res = hasil_opt[dia]
         ws2.cell(r, 1, f"DIAMETER D{dia}   |   Batang stok {cfg.stok.panjang_batang_mm} mm")

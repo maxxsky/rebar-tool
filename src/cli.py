@@ -44,11 +44,6 @@ def cmd_optimize(args):
         print(w)
     cuts = _baca_csv(args.csv)
 
-    if args.no_limit:
-        import dataclasses
-        cfg = dataclasses.replace(cfg, optimizer=dataclasses.replace(
-            cfg.optimizer, batasi_pola=False))
-
     results = optimize_all(cuts, cfg)
     if not results:
         print("Tidak ada potongan.")
@@ -116,8 +111,6 @@ def main():
     po = sub.add_parser("optimize", help="optimasi potong dari CSV")
     po.add_argument("csv", type=Path)
     po.add_argument("--config", type=Path, default=Path("config"))
-    po.add_argument("--no-limit", action="store_true",
-                    help="lewati pembatasan pola (bandingkan)")
     po.set_defaults(fn=cmd_optimize)
 
     pb = sub.add_parser("bbs", help="generate BBS + optimizer + export Excel")

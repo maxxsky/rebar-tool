@@ -36,7 +36,14 @@ class SengkangConfig:
 @dataclass(frozen=True)
 class OptimizerConfig:
     max_pola: int = 8
-    batasi_pola: bool = True
+    batasi_pola: bool = False   # PATCH-01: pembatasan pola dihapus — true ditolak loader
+
+
+class InfeasiblePatternError(Exception):
+    """BUG INTERNAL: pola tidak layak dieksekusi / batang tidak terwakili.
+
+    Bukan error input — pesan menyebut itu supaya tidak salah diagnosa.
+    """
 
 
 @dataclass(frozen=True)

@@ -41,7 +41,7 @@ python3 -m venv .venv
 ## Test
 
 ```bash
-.venv/bin/python -m pytest tests -q    # 52 passed
+.venv/bin/python -m pytest tests -q    # 69 passed
 ```
 
 ## Struktur

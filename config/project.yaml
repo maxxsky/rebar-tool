@@ -77,5 +77,7 @@ sengkang:
 
 # ── Optimizer potong ───────────────────────────────────────
 optimizer:
-  max_pola: 8                    # batas jumlah pola potong berbeda (default 8)
-  batasi_pola: true              # false = lewati pembatasan (utk perbandingan)
+  max_pola: 8                    # PATCH-01: hanya pelaporan — lihat batasi_pola
+  batasi_pola: false             # PATCH-01: pembatasan pola DIHAPUS — true ditolak loader.
+                                 # Pola 'SISA/CAMPURAN' tidak bisa dieksekusi & batang
+                                 # tidak terwakili. Output pola panjang tapi benar.

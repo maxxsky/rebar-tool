@@ -1,12 +1,3 @@
-"""CLI standalone rebar-tool (F1).
-
-Contoh:
-    python src/cli.py optimize input/potongan.csv --config config
-    python src/cli.py optimize input/potongan.csv --config config --no-limit
-
-CSV: header `dia,panjang_mm,jumlah`
-"""
-
 import argparse
 import csv
 import sys
@@ -17,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config_loader import load_all
 from models import Cut
 from optimizer import optimize_all
+from bbs import agregasi, generate_bbs
+from input_reader import baca_elemen_xlsx
 
 
 def _baca_csv(path: Path) -> list[Cut]:
@@ -51,7 +44,6 @@ def cmd_optimize(args):
         print(w)
     cuts = _baca_csv(args.csv)
 
-    # bypass pembatasan pola kalau --no-limit
     if args.no_limit:
         import dataclasses
         cfg = dataclasses.replace(cfg, optimizer=dataclasses.replace(
@@ -77,8 +69,27 @@ def cmd_optimize(args):
     total_batang = sum(r.total_batang for r in results.values())
     total_waste = sum(r.total_sisa_mm for r in results.values())
     total_stok = sum(r.total_panjang_stok_mm for r in results.values())
-    print(f"TOTAL: {total_batang} batang | sisa {total_waste:,} mm "
-          f"({total_waste / total_stok * 100:.2f}%)" if total_stok else "")
+    if total_stok:
+        print(f"TOTAL: {total_batang} batang | sisa {total_waste:,} mm "
+              f"({total_waste / total_stok * 100:.2f}%)")
+    return 0
+
+
+def cmd_bbs(args):
+    cfg, templates = load_all(args.config)
+    for w in cfg.warnings:
+        print(w)
+    elemen = baca_elemen_xlsx(args.input, templates)
+    cuts = generate_bbs(templates, elemen, cfg)
+    agg = agregasi(cuts)
+
+    print(f"=== BBS — {cfg.nama} ({cfg.kode}) ===")
+    print(f"sumber: {cfg.sumber.dokumen} {cfg.sumber.revisi} — {cfg.sumber.tanggal}")
+    print(f"elemen: {len(elemen)} grup | cut: {len(cuts)} -> agregat {len(agg)}")
+    print()
+    print(f"{'dia':>4} {'panjang':>8} {'jumlah':>6}  bar_mark")
+    for c in agg:
+        print(f"{c.dia:>4} {c.panjang_mm:>8} {c.jumlah:>6}  {c.bar_mark or '-'}")
     return 0
 
 
@@ -92,6 +103,11 @@ def main():
     po.add_argument("--no-limit", action="store_true",
                     help="lewati pembatasan pola (bandingkan)")
     po.set_defaults(fn=cmd_optimize)
+
+    pb = sub.add_parser("bbs", help="generate BBS dari elemen.xlsx")
+    pb.add_argument("input", type=Path, nargs="?", default=Path("input/elemen.xlsx"))
+    pb.add_argument("--config", type=Path, default=Path("config"))
+    pb.set_defaults(fn=cmd_bbs)
 
     args = parser.parse_args()
     sys.exit(args.fn(args))

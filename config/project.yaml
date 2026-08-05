@@ -55,6 +55,8 @@ hook:
     16: 190
   # faktor diameter bengkokan dalam (kelipatan d)
   diameter_bengkok_faktor: 4
+  # koreksi bengkokan — OFF sampai terverifikasi ke BBS asli (F4, spec 02 §3.1)
+  koreksi_bengkokan_aktif: false
 
 # ── Unit weight (kg/m) ────────────────────────────────────
 # Konstanta fisik, boleh default tapi tetap override-able
@@ -71,6 +73,7 @@ sengkang:
   zona_tumpuan_faktor: 0.25     # panjang zona tumpuan = faktor × bentang bersih
                                 # diukur dari tiap muka tumpuan
   jarak_sengkang_pertama_mm: 50 # jarak sengkang pertama dari muka tumpuan
+  metode_hitung: "kontinyu"     # "kontinyu" (default) | "per_zona" — spec 02 §4.3
 
 # ── Optimizer potong ───────────────────────────────────────
 optimizer:

@@ -30,6 +30,7 @@ class StockConfig:
 class SengkangConfig:
     zona_tumpuan_faktor: float
     jarak_sengkang_pertama_mm: int
+    metode_hitung: str = "kontinyu"   # "kontinyu" | "per_zona" — lihat spec 02 §4.3
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class ProjectConfig:
     unit_weight: dict                # dia -> kg/m
     sengkang_cfg: SengkangConfig
     optimizer: OptimizerConfig
+    koreksi_bend_aktif: bool = False  # spec 02 §3.1 — default OFF sampai terverifikasi (F4)
     warnings: list = field(default_factory=list)
 
 
@@ -100,12 +102,26 @@ class ElemenInput:
 
 
 # ── Cutting stock (F1) ──────────────────────────────────────
+class LengthExceedsStockError(Exception):
+    """Panjang potong > batang stok — fail loud, bukan silent truncate (F6)."""
+
+
 @dataclass(frozen=True)
 class Cut:
-    """Satu kebutuhan potongan: diameter + panjang + jumlah."""
-    dia: int
-    panjang_mm: int
+    """Satu kebutuhan potongan: diameter + panjang + jumlah.
+
+    Metadata dibawa untuk traceability & output BBS.
+    """
+    dia: int              # mm
+    panjang_mm: int       # panjang potong (sudah termasuk hook & bengkokan)
     jumlah: int
+    # metadata untuk traceability & output BBS
+    bar_mark: str = ""    # "B1-A" (tipe - posisi)
+    tipe_elemen: str = "" # "B1"
+    posisi: str = ""      # "atas" | "bawah" | "pinggang" | "sengkang"
+    shape_code: str = ""  # "01" lurus, "51" sengkang, dst
+    lokasi: str = ""      # dari input, bebas teks
+    segmen_mm: tuple[int, ...] = ()   # dimensi per segmen, untuk kolom shape
 
 
 @dataclass(frozen=True)

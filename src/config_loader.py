@@ -141,8 +141,14 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         faktor, jarak_pertama = 0.25, 50
     if not (0.0 <= faktor <= 0.5):
         errors.append(f"sengkang.zona_tumpuan_faktor = {faktor} harus 0-0.5")
+    metode = sk_raw.get("metode_hitung", "kontinyu")
+    if metode not in ("kontinyu", "per_zona"):
+        errors.append(f"sengkang.metode_hitung harus 'kontinyu' atau 'per_zona', "
+                      f"dapat {metode!r}")
+        metode = "kontinyu"
     sengkang_cfg = SengkangConfig(zona_tumpuan_faktor=faktor,
-                                  jarak_sengkang_pertama_mm=jarak_pertama)
+                                  jarak_sengkang_pertama_mm=jarak_pertama,
+                                  metode_hitung=metode)
 
     # ── optimizer ──
     opt_raw = data.get("optimizer") or {}
@@ -157,11 +163,22 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         batasi = True
     optimizer_cfg = OptimizerConfig(max_pola=max_pola, batasi_pola=batasi)
 
+    # ── koreksi bengkokan (spec 02 §3.1) — default OFF ──
+    koreksi_bend = hook_raw.get("koreksi_bengkokan_aktif", False)
+    if not isinstance(koreksi_bend, bool):
+        errors.append(f"hook.koreksi_bengkokan_aktif harus boolean, dapat {koreksi_bend!r}")
+        koreksi_bend = False
+    if koreksi_bend:
+        warnings.append(
+            "WARNING: koreksi_bengkokan AKTIF — besaran koreksi belum diverifikasi "
+            "terhadap BBS asli (F4). Pastikan angka tail dari gambar belum termasuk "
+            "koreksi, kalau ragu matikan.")
+
     return ProjectConfig(
         nama=nama, kode=kode, sumber=sumber, stok=stok, cover=cover,
         ld=ld, lap=lap, hook_tail=hook_tail, bend_factor=bend_factor,
         unit_weight=uw, sengkang_cfg=sengkang_cfg, warnings=warnings,
-        optimizer=optimizer_cfg)
+        optimizer=optimizer_cfg, koreksi_bend_aktif=koreksi_bend)
 
 
 def _load_dia_dict(raw, path, errors) -> dict:

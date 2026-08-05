@@ -358,11 +358,195 @@ def load_all(config_dir) -> tuple[ProjectConfig, dict[str, ElementTemplate]]:
     return cfg, templates
 
 
-# ── multi-proyek (F3.6) ────────────────────────────────────
+# ── multi-proyek berlapis (08-SPEC-config-berlapis) ────────
 # Struktur baru:
-#   config/projects/{kode}.yaml     — nilai teknis per proyek
-#   config/templates/{kode}.yaml    — template elemen per proyek
-#   config/project.yaml             — DEPRECATED, dipakai test lama & migrasi
+#   config/projects/{kode}/project.yaml      — nilai umum + default teknis
+#   config/projects/{kode}/templates.yaml    — template elemen (milik proyek)
+#   config/projects/{kode}/drawings/{g}.yaml — override per gambar + metadata
+#
+# Resolusi: deep merge default proyek ← override gambar. Yang tidak disebut
+# di gambar = diwarisi. Hasil = ProjectConfig biasa → bbs/optimizer tak berubah.
+
+
+def _deep_merge_dict(base: dict, ovr: dict) -> dict:
+    """Deep merge per key, BUKAN replace per grup."""
+    out = dict(base or {})
+    for k, v in (ovr or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge_dict(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
+    """Gabungkan default proyek dengan override gambar (deep merge)."""
+    import dataclasses
+    ovr = drawing_override or {}
+    cfg_d = {
+        "stok": {"panjang_batang_mm": cfg.stok.panjang_batang_mm,
+                 "kerf_mm": cfg.stok.kerf_mm,
+                 "sisa_min_simpan_mm": cfg.stok.sisa_min_simpan_mm},
+        "selimut_beton_mm": dict(cfg.cover),
+        "panjang_penyaluran_mm": dict(cfg.ld),
+        "lap_splice_mm": dict(cfg.lap),
+        "unit_weight_kg_per_m": dict(cfg.unit_weight),
+        "hook": {"tail_135_mm": dict(cfg.hook_tail.get(135, {})),
+                 "tail_90_mm": dict(cfg.hook_tail.get(90, {})),
+                 "diameter_bengkok_faktor": cfg.bend_factor,
+                 "koreksi_bengkokan_aktif": cfg.koreksi_bend_aktif},
+        "sengkang": {"zona_tumpuan_faktor": cfg.sengkang_cfg.zona_tumpuan_faktor,
+                     "jarak_sengkang_pertama_mm":
+                         cfg.sengkang_cfg.jarak_sengkang_pertama_mm,
+                     "metode_hitung": cfg.sengkang_cfg.metode_hitung},
+    }
+    merged = _deep_merge_dict(cfg_d, ovr)
+
+    # hook_tail: key 'tail_135_mm'/'tail_90_mm' → sudut int
+    hook_tail = {}
+    for s, m in merged["hook"].items():
+        if isinstance(m, dict):
+            sudut = 135 if "135" in str(s) else 90
+            hook_tail[sudut] = {int(d): int(v) for d, v in m.items()}
+
+    sk = cfg.sengkang_cfg
+    m = merged["sengkang"]
+    if (m.get("zona_tumpuan_faktor") != sk.zona_tumpuan_faktor
+            or m.get("jarak_sengkang_pertama_mm") != sk.jarak_sengkang_pertama_mm
+            or m.get("metode_hitung") != sk.metode_hitung):
+        sk = SengkangConfig(zona_tumpuan_faktor=m["zona_tumpuan_faktor"],
+                            jarak_sengkang_pertama_mm=m["jarak_sengkang_pertama_mm"],
+                            metode_hitung=m.get("metode_hitung", "kontinyu"))
+    return dataclasses.replace(
+        cfg,
+        cover={int(k) if str(k).isdigit() else k: v
+               for k, v in merged["selimut_beton_mm"].items()},
+        ld={int(k): int(v) for k, v in merged["panjang_penyaluran_mm"].items()},
+        lap={int(k): int(v) for k, v in merged["lap_splice_mm"].items()},
+        unit_weight={int(k): float(v)
+                     for k, v in merged["unit_weight_kg_per_m"].items()},
+        hook_tail=hook_tail,
+        bend_factor=int(merged["hook"].get("diameter_bengkok_faktor", 4)),
+        koreksi_bend_aktif=bool(merged["hook"].get("koreksi_bengkokan_aktif", False)),
+        sengkang_cfg=sk,
+        stok=StockConfig(panjang_batang_mm=int(merged["stok"]["panjang_batang_mm"]),
+                         kerf_mm=int(merged["stok"]["kerf_mm"]),
+                         sisa_min_simpan_mm=int(merged["stok"]["sisa_min_simpan_mm"])),
+    )
+
+
+def load_drawing(projects_dir, proyek, gambar) -> dict:
+    """Baca drawing {g}.yaml → dict (override + metadata). Raises ConfigError."""
+    import yaml
+    p = Path(projects_dir) / proyek / "drawings" / f"{gambar}.yaml"
+    if not p.exists():
+        raise ConfigError(f"Gambar '{gambar}' tidak ada di proyek '{proyek}'.")
+    d = yaml.safe_load(p.read_text()) or {}
+    d.pop("_meta", None)
+    return d
+
+
+def list_drawings(projects_dir, proyek) -> list[dict]:
+    """Daftar gambar: kode, nama, revisi, tanggal, jumlah override."""
+    import yaml
+    ddir = Path(projects_dir) / proyek / "drawings"
+    out = []
+    if not ddir.exists():
+        return out
+    for p in sorted(ddir.glob("*.yaml")):
+        d = yaml.safe_load(p.read_text()) or {}
+        ovr = d.get("override", {}) or {}
+        out.append({
+            "kode": p.stem,
+            "nama": d.get("nama", p.stem),
+            "revisi": d.get("revisi", ""),
+            "tanggal": d.get("tanggal", ""),
+            "catatan": d.get("catatan", ""),
+            "n_override": sum(len(v) for v in ovr.values()
+                              if isinstance(v, dict)),
+        })
+    return out
+
+
+def load_layered(projects_dir, proyek, gambar):
+    """Load proyek + resolusi gambar → (ProjectConfig, templates, drawing_info).
+
+    Validasi dijalankan pada HASIL RESOLUSI — pesan menyebut gambar.
+    """
+    import yaml
+    from pathlib import Path as _P
+    base = _P(projects_dir) / proyek
+    proj_f = base / "project.yaml"
+    tpl_f = base / "templates.yaml"
+    if not proj_f.exists() or not tpl_f.exists():
+        raise ConfigError(f"Proyek '{proyek}' tidak lengkap (project.yaml/templates.yaml).")
+    cfg = load_project_config(proj_f)
+    templates = load_templates(tpl_f)
+
+    drawing = load_drawing(projects_dir, proyek, gambar)
+    cfg_res = resolve_config(cfg, drawing.get("override"))
+
+    errors: list[str] = []
+    validate_config_templates(cfg_res, templates, errors)
+    if errors:
+        rev = drawing.get("revisi", "")
+        raise ConfigError(
+            f"ERROR: Config gambar {gambar} ({rev}) tidak lengkap.\n\n"
+            + "\n\n".join(e.replace("ERROR: ", "")
+                          for e in errors)
+            + f"\n\nDiameter yang kurang bisa diisi di override gambar "
+              f"{gambar} atau di default proyek {proyek}.")
+
+    info = {"kode": gambar, "nama": drawing.get("nama", gambar),
+            "revisi": drawing.get("revisi", ""),
+            "tanggal": drawing.get("tanggal", ""),
+            "catatan": drawing.get("catatan", "")}
+    return cfg_res, templates, info
+
+
+def migrate_legacy_layered(config_dir):
+    """Migrasi config/project.yaml → projects/{kode}/ (berlapis) sekali.
+
+    - project.yaml → projects/{kode}/project.yaml
+    - templates.yaml → projects/{kode}/templates.yaml
+    - drawings/{kode_sumber}.yaml (override kosong, metadata dari blok sumber)
+    """
+    import yaml
+    config_dir = Path(config_dir)
+    proj_file = config_dir / "project.yaml"
+    if not proj_file.exists():
+        return False
+    # cek sudah ada folder berlapis
+    if any((config_dir / "projects").glob("*/project.yaml")):
+        return False
+    data = yaml.safe_load(proj_file.read_text())
+    kode = str((data.get("proyek") or {}).get("kode", "PRJ-001"))
+    if not kode or not all(c.isalnum() or c in "_-" for c in kode):
+        kode = "PRJ-001"
+
+    pdir = config_dir / "projects" / kode
+    (pdir / "drawings").mkdir(parents=True, exist_ok=True)
+    ts = datetime.utcnow().replace(microsecond=0).isoformat() + "+00:00"
+    meta = f"_meta:\n  dibuat_via: migrasi\n  dibuat_pada: {ts}\n"
+
+    (pdir / "project.yaml").write_text(meta + proj_file.read_text())
+    (pdir / "templates.yaml").write_text(meta +
+        (config_dir / "templates.yaml").read_text())
+
+    # gambar dari blok sumber
+    sumber = data.get("sumber") or {}
+    drawing = {
+        "kode": kode,
+        "nama": "Migrasi otomatis",
+        "revisi": str(sumber.get("revisi", "")),
+        "tanggal": str(sumber.get("tanggal", "")),
+        "catatan": str(sumber.get("catatan", "")),
+        "override": {},
+        "_meta": {"dibuat_via": "migrasi", "dibuat_pada": ts},
+    }
+    (pdir / "drawings" / f"{kode}.yaml").write_text(
+        yaml.safe_dump(drawing, allow_unicode=True))
+    return True
 
 
 def load_project(projects_dir, kode) -> tuple[ProjectConfig, dict[str, ElementTemplate]]:
@@ -384,23 +568,43 @@ def load_project(projects_dir, kode) -> tuple[ProjectConfig, dict[str, ElementTe
 
 
 def list_projects(projects_dir) -> list[dict]:
-    """Daftar proyek: kode, nama, sumber, jumlah template."""
+    """Daftar proyek: kode, nama, sumber, jumlah template.
+
+    Baca dua bentuk: folder berlapis (08) dan file flat (F3.6 legacy)."""
     projects_dir = Path(projects_dir)
     out = []
+    seen = set()
     if not (projects_dir / "projects").exists():
         return out
+    # folder berlapis: projects/{kode}/project.yaml
+    for p in sorted((projects_dir / "projects").glob("*/project.yaml")):
+        kode = p.parent.name
+        try:
+            cfg = load_project_config(p)
+            templates = load_templates(p.parent / "templates.yaml")
+        except ConfigError:
+            continue
+        seen.add(kode)
+        out.append({
+            "kode": kode, "nama": cfg.nama,
+            "sumber": f"{cfg.sumber.dokumen} {cfg.sumber.revisi} "
+                      f"({cfg.sumber.tanggal})",
+            "jumlah_template": len(templates), "berlapis": True,
+        })
+    # flat legacy: projects/{kode}.yaml
     for p in sorted((projects_dir / "projects").glob("*.yaml")):
         kode = p.stem
+        if kode in seen or kode.startswith("_"):
+            continue
         try:
             cfg, templates = load_project(projects_dir, kode)
         except ConfigError:
             continue
         out.append({
-            "kode": kode,
-            "nama": cfg.nama,
+            "kode": kode, "nama": cfg.nama,
             "sumber": f"{cfg.sumber.dokumen} {cfg.sumber.revisi} "
                       f"({cfg.sumber.tanggal})",
-            "jumlah_template": len(templates),
+            "jumlah_template": len(templates), "berlapis": False,
         })
     return out
 

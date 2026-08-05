@@ -1,0 +1,9 @@
+_meta:
+  dibuat_pada: '2026-08-05T08:16:25+00:00'
+  dibuat_via: migrasi
+catatan: Nilai Ld & lap diambil dari tabel notes GS-01 sheet 2
+kode: PRJ-001
+nama: Migrasi otomatis
+override: {}
+revisi: Rev.3
+tanggal: '2026-05-12'

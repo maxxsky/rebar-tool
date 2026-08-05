@@ -80,16 +80,21 @@ def _agregat_berat_per_dia(cuts, cfg):
 
 def generate_excel(cfg: ProjectConfig, elemen_list, cuts_bbs,
                    hasil_opt: dict[int, OptimizeResult], config_dir: Path,
-                   out_path: Path, override_info=None) -> Path:
+                   out_path: Path, override_info=None, gambar_info=None) -> Path:
     """cuts_bbs = daftar Cut dari generate_bbs (per bar mark, sebelum agregasi).
     override_info: list[str] perubahan config akibat 'Pakai sekali' — ditulis
-    sebagai peringatan di header tiap sheet (PATCH-02 §1.3)."""
+    sebagai peringatan di header tiap sheet (PATCH-02 §1.3).
+    gambar_info: dict kode/nama/revisi gambar (08) — dicetak di header."""
     warnings = list(cfg.warnings)
     extra_lines = list(override_info or [])
     if override_info:
         extra_lines.insert(
             0, "⚠ CONFIG DI-OVERRIDE — hasil ini tidak sesuai file config. "
                "Jangan dipakai untuk pemesanan.")
+    if gambar_info:
+        extra_lines.insert(
+            0, f"GAMBAR  : {gambar_info.get('kode')} {gambar_info.get('revisi')} "
+               f"— {gambar_info.get('nama')} ({gambar_info.get('tanggal')})")
     wb = Workbook()
 
     # ── Sheet 1: BBS ────────────────────────────────────────

@@ -10,43 +10,110 @@ let proyekAktif = localStorage.getItem('rebar_proyek') || '';
 const fmtM = (mm) => (mm / 1000).toFixed(3);
 const fmtKg = (v) => v.toFixed(2);
 
-// ── proyek ─────────────────────────────────────────────────
+// ── proyek & gambar (08 berlapis) ─────────────────────────
+let gambarAktif = '';
+let drawingAsal = null;    // asal tiap nilai: {selimut_beton_mm: {balok: {nilai, asal}}}
+let proyekBerlapis = false;
+
 async function loadProjek() {
   const d = await (await fetch('/api/projects')).json();
   const sel = $('projSelect');
   sel.innerHTML = '<option value="">— pilih proyek —</option>' +
     (d.projects || []).map(p =>
-      `<option value="${p.kode}">${p.kode} — ${p.nama}</option>`).join('');
+      `<option value="${p.kode}" data-berlapis="${p.berlapis ? 1 : 0}">` +
+      `${p.kode} — ${p.nama}</option>`).join('');
   if (proyekAktif) {
     const ok = (d.projects || []).some(p => p.kode === proyekAktif);
     if (ok) sel.value = proyekAktif;
     else { proyekAktif = ''; localStorage.removeItem('rebar_proyek'); }
   }
-  updateProjLabel();
+  if (sel.value) pilihProyek(sel.value);
   return d.projects || [];
 }
 
-function updateProjLabel() {
-  const sel = $('projSelect');
-  const opt = sel.options[sel.selectedIndex];
-  $('projLabel').textContent = opt && opt.value ? '' : '';
-  // label diisi setelah config di-load (nama + sumber)
-}
-
 async function pilihProyek(kode) {
-  if (!kode) { templates = {}; $('projLabel').textContent = ''; proyekRaw = null; return; }
+  if (!kode) {
+    templates = {}; proyekRaw = null; proyekBerlapis = false;
+    $('projLabel').textContent = '';
+    $('gbrSelect').style.display = 'none';
+    $('btnNewGbr').style.display = 'none';
+    return;
+  }
   proyekAktif = kode;
   localStorage.setItem('rebar_proyek', kode);
-  const d = await (await fetch(`/api/projects/${kode}`)).json();
-  if (!d.ok) return;
-  templates = d.templates;
-  proyekRaw = { config: d.config, templates: d.templates };
-  const cfg = d.config;
-  $('projLabel').textContent =
-    `${cfg.proyek.nama} (${cfg.proyek.kode}) — ` +
-    `${cfg.sumber.dokumen} ${cfg.sumber.revisi}`;
-  renderParamFromConfig(cfg, []);
+  const opt = $('projSelect').selectedOptions[0];
+  proyekBerlapis = opt && opt.dataset.berlapis === '1';
+
+  if (!proyekBerlapis) {
+    // flat legacy (F3.6) — tanpa gambar
+    const d = await (await fetch(`/api/projects/${kode}`)).json();
+    if (!d.ok) return;
+    templates = d.templates;
+    proyekRaw = { config: d.config, templates: d.templates };
+    gambarAktif = '';
+    $('projLabel').textContent =
+      `${d.config.proyek.nama} (${d.config.proyek.kode}) — ` +
+      `${d.config.sumber.dokumen} ${d.config.sumber.revisi}`;
+    $('gbrSelect').style.display = 'none';
+    $('btnNewGbr').style.display = 'none';
+    renderParamFromConfig(d.config, []);
+    return;
+  }
+
+  // berlapis — fetch drawings + default proyek
+  const dflt = await (await fetch(`/api/projects/${kode}`)).json();
+  if (dflt.ok) proyekDefault = dflt.config;
+  const dl = await (await fetch(`/api/projects/${kode}/drawings`)).json();
+  const gsel = $('gbrSelect');
+  gsel.innerHTML = '<option value="">— pilih gambar —</option>' +
+    (dl.drawings || []).map(g =>
+      `<option value="${g.kode}">${g.kode} ${g.revisi} — ${g.nama}</option>`).join('');
+  gsel.style.display = '';
+  $('btnNewGbr').style.display = '';
+  if (dl.drawings && dl.drawings.length) {
+    gambarAktif = dl.drawings[0].kode;
+    gsel.value = gambarAktif;
+    await pilihGambar(gambarAktif);
+  } else {
+    $('projLabel').textContent = `${kode} — belum ada gambar`;
+  }
 }
+
+async function pilihGambar(gkode) {
+  if (!gkode) { gambarAktif = ''; return; }
+  gambarAktif = gkode;
+  const d = await (await fetch(`/api/projects/${proyekAktif}/drawings/${gkode}`)).json();
+  if (!d.ok) { alert(d.error || 'Gagal load gambar'); return; }
+  templates = d.templates;
+  drawingAsal = d.asal || null;
+  proyekRaw = { config: d.config_efektif, templates: d.templates,
+                override: d.override || {} };
+  const info = d.drawing || {};
+  $('projLabel').textContent =
+    `${proyekAktif} · ${gkode} ${info.revisi || ''} — ${info.nama || ''}`;
+  renderPanelView(d.config_efektif);
+}
+
+$('gbrSelect').onchange = (e) => pilihGambar(e.target.value);
+$('btnNewGbr').onclick = async () => {
+  const kode = prompt('Kode gambar (mis. GS-03):');
+  if (!kode) return;
+  const nama = prompt('Nama gambar (mis. Struktur Atas):');
+  const revisi = prompt('Revisi:');
+  const tanggal = prompt('Tanggal revisi gambar (YYYY-MM-DD):');
+  if (!nama || !revisi || !tanggal) { alert('nama, revisi, tanggal wajib.'); return; }
+  const res = await fetch(`/api/projects/${proyekAktif}/drawings`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kode, nama, revisi, tanggal })
+  });
+  const d = await res.json();
+  if (!d.ok) { alert(d.error || 'Gagal'); return; }
+  await pilihProyek(proyekAktif);
+  $('gbrSelect').value = kode;
+  await pilihGambar(kode);
+};
+
+function updateProjLabel() { /* diganti pilihProyek/pilihGambar */ }
 
 $('projSelect').onchange = (e) => pilihProyek(e.target.value);
 $('btnNewProj').onclick = () => bukaWizard('baru');
@@ -471,7 +538,7 @@ async function hitung() {
 
   const res = await fetch('/api/hitung', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ elemen, override, kode: proyekAktif })
+    body: JSON.stringify({ elemen, override, proyek: proyekAktif, gambar: gambarAktif })
   });
   const d = await res.json();
   if (!d.ok) { renderError(d); return; }
@@ -626,7 +693,79 @@ function renderParamFromConfig(cfg, overrideAktif) {
   renderParam(c, overrideAktif || []);
 }
 
+// ── tampilan panel dengan asal nilai (08 §5) ───────────────
+function renderPanelView(cfg) {
+  $('paramActions').style.display = proyekAktif ? '' : 'none';
+  $('paramForm').style.display = 'none';
+  $('paramBody').style.display = '';
+  $('btnParamEdit').textContent = '✎ Edit';
+  if (!drawingAsal) { renderParam(cfg, []); return; }
+  const a = drawingAsal;
+  const m = (x) => (x && x.asal === 'gambar')
+    ? ' <span class="ovr-flag">[GAMBAR INI]</span>' : '';
+  const coverTxt = Object.entries(a.selimut_beton_mm || {}).map(([k, v]) =>
+    `${k}=${v.nilai}${m(v)}`).join(' ');
+  const ldTxt = Object.entries(a.panjang_penyaluran_mm || {}).map(([k, v]) =>
+    `D${k}=${v.nilai}${m(v)}`).join(' ');
+  const hookTxt = Object.entries(a.hook_tail || {}).map(([s, mm]) =>
+    `${s.replace('tail_', '').replace('_mm', '')}°:` +
+    Object.entries(mm).map(([d, v]) => `D${d}=${v.nilai}${m(v)}`).join(' ')
+  ).join(' | ');
+  const skTxt = Object.entries(a.sengkang || {}).map(([k, v]) =>
+    `${k}=${v.nilai}${m(v)}`).join(' | ');
+  $('paramBody').innerHTML =
+    `stok ${cfg.stok_mm} mm | kerf ${cfg.kerf_mm} | sisa min ${cfg.sisa_min_simpan_mm}\n` +
+    `cover: ${coverTxt}\n` +
+    `Ld: ${ldTxt}\n` +
+    `hook tail: ${hookTxt}\n` +
+    `sengkang: ${skTxt}\n` +
+    `koreksi bengkokan: ${cfg.koreksi_bend_aktif ? 'AKTIF' : 'nonaktif'}\n` +
+    `<span style="color:#b45309;font-size:10.5px">[GAMBAR INI] = di-override di gambar; sisanya diwarisi proyek</span>`;
+}
+
 // ── edit panel (PATCH-02 §1) ───────────────────────────────
+let proyekDefault = null;   // config default proyek (berlapis, 08)
+
+function diffOverride(formConfig, defConfig) {
+  /* Hanya field yang beda dari default proyek — yang lain diwarisi (08 §5.1). */
+  const ovr = {};
+  const diffDict = (dk, fk) => {
+    const d = defConfig[dk] || {}, f = formConfig[fk] || {};
+    const out = {};
+    for (const k of new Set([...Object.keys(d), ...Object.keys(f)])) {
+      if (f[k] !== undefined && String(f[k]) !== String(d[k] ?? '')) out[k] = f[k];
+    }
+    return out;
+  };
+  const c = diffDict('selimut_beton_mm', 'selimut_beton_mm');
+  if (Object.keys(c).length) ovr.selimut_beton_mm = c;
+  const ld = diffDict('panjang_penyaluran_mm', 'panjang_penyaluran_mm');
+  if (Object.keys(ld).length) ovr.panjang_penyaluran_mm = ld;
+  const lap = diffDict('lap_splice_mm', 'lap_splice_mm');
+  if (Object.keys(lap).length) ovr.lap_splice_mm = lap;
+  const uw = diffDict('unit_weight_kg_per_m', 'unit_weight_kg_per_m');
+  if (Object.keys(uw).length) ovr.unit_weight_kg_per_m = uw;
+  const h135 = diffDict('tail_135_mm', 'tail_135_mm');
+  const h90 = diffDict('tail_90_mm', 'tail_90_mm');
+  if (Object.keys(h135).length || Object.keys(h90).length) {
+    ovr.hook = {};
+    if (Object.keys(h135).length) ovr.hook.tail_135_mm = h135;
+    if (Object.keys(h90).length) ovr.hook.tail_90_mm = h90;
+  }
+  const dsk = defConfig.sengkang || {}, fsk = formConfig.sengkang || {};
+  const sk = {};
+  for (const k of ['zona_tumpuan_faktor', 'jarak_sengkang_pertama_mm', 'metode_hitung']) {
+    if (fsk[k] !== undefined && String(fsk[k]) !== String(dsk[k] ?? '')) sk[k] = fsk[k];
+  }
+  if (Object.keys(sk).length) ovr.sengkang = sk;
+  if (formConfig.hook && defConfig.hook &&
+      !!formConfig.hook.koreksi_bengkokan_aktif !== !!defConfig.hook.koreksi_bengkokan_aktif) {
+    ovr.hook = ovr.hook || {};
+    ovr.hook.koreksi_bengkokan_aktif = !!formConfig.hook.koreksi_bengkokan_aktif;
+  }
+  return ovr;
+}
+
 function renderPanelEdit() {
   if (!proyekRaw) return;
   const c = proyekRaw.config;
@@ -754,13 +893,33 @@ function showOverrideBanner() {
 
 async function panelSimpanConfig() {
   const c = bacaPanelForm();
-  const revisi = prompt('Revisi gambar yang jadi dasar nilai baru (wajib):', proyekRaw.config.sumber.revisi || '');
+  const revisi = prompt('Revisi gambar yang jadi dasar nilai baru (wajib):', proyekRaw.config.sumber?.revisi || '');
   if (revisi === null) return;
-  const catatan = prompt('Catatan — dari mana nilainya diambil (wajib):', proyekRaw.config.sumber.catatan || '');
+  const catatan = prompt('Catatan — dari mana nilainya diambil (wajib):', proyekRaw.config.sumber?.catatan || '');
   if (catatan === null) return;
   const koreksi = confirm('Centang OK kalau ini KOREKSI SALAH KETIK, bukan revisi gambar.');
   c.sumber.revisi = revisi.trim();
   c.sumber.catatan = catatan.trim();
+
+  if (proyekBerlapis && gambarAktif && proyekDefault) {
+    // simpan ke GAMBAR — override saja (yang beda dari default proyek)
+    const ovr = diffOverride(c, proyekDefault);
+    const res = await fetch(`/api/projects/${proyekAktif}/drawings/${gambarAktif}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ override: ovr, revisi: revisi.trim(),
+                             catatan: catatan.trim(),
+                             koreksi_bukan_revisi: koreksi })
+    });
+    const d = await res.json();
+    if (!d.ok) { alert(d.error || 'Gagal simpan'); return; }
+    wideOverride = null;
+    $('warnBanner').className = '';
+    alert('Tersimpan ke gambar. File lama diarsipkan.');
+    await pilihGambar(gambarAktif);
+    return;
+  }
+
+  // flat legacy — PATCH /api/config
   const res = await fetch('/api/config', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kode: proyekAktif, config: c, templates: proyekRaw.templates,
@@ -799,7 +958,7 @@ $('btnExcel').onclick = async () => {
   const override = lastOverride;
   const res = await fetch('/api/export', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ elemen, override, kode: proyekAktif })
+    body: JSON.stringify({ elemen, override, proyek: proyekAktif, gambar: gambarAktif })
   });
   if (!res.ok) {
     const d = await res.json();

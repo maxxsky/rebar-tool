@@ -8,3 +8,5 @@ input/*.xlsx
 # arsip revisi config — runtime, jangan masuk repo
 config/projects/_arsip/
 config/templates/_arsip/
+config/projects/*/_arsip/
+config/_arsip/

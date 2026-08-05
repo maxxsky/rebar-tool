@@ -18,8 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from bbs import agregasi, generate_bbs          # noqa: E402
-from config_loader import (load_all, load_project, list_projects,      # noqa: E402
-                           migrate_legacy)
+from config_loader import (load_all, load_layered, list_drawings,       # noqa: E402
+                           list_projects, migrate_legacy,               # noqa: E402
+                           migrate_legacy_layered, load_project,         # noqa: E402
+                           resolve_config, load_drawing)                # noqa: E402
 from export import generate_excel               # noqa: E402
 from models import (ConfigError, Cut, ElemenInput, InfeasiblePatternError,
                     LengthExceedsStockError, TOOL_VERSION)   # noqa: E402
@@ -32,6 +34,8 @@ CONFIG_DIR = ROOT / "config"
 
 # migrasi config lama → projects/ sekali (F3.6 §7)
 migrate_legacy(CONFIG_DIR)
+# migrasi berlapis (08) — jalan kalau belum ada folder berlapis
+migrate_legacy_layered(CONFIG_DIR)
 
 
 # ── helpers ────────────────────────────────────────────────
@@ -248,8 +252,11 @@ def _bbs_dict(c):
             "segmen_mm": list(c.segmen_mm)}
 
 
-def _hitung(cfg, templates, elemen):
-    """Inti perhitungan — modul yang SAMA dengan CLI."""
+def _hitung(cfg, templates, elemen, gambar_kode=None):
+    """Inti perhitungan — modul yang SAMA dengan CLI.
+
+    gambar_kode: prefix bar_mark (08-SPEC §4.3) — bar mark jadi "GS-02/B1-A".
+    """
     # validasi tipe
     for el in elemen:
         if el.tipe not in templates:
@@ -257,9 +264,30 @@ def _hitung(cfg, templates, elemen):
                 f"Tipe '{el.tipe}' tidak ada di templates.yaml. "
                 f"Tersedia: {', '.join(sorted(templates))}")
     cuts = generate_bbs(templates, elemen, cfg)
+    if gambar_kode:
+        import dataclasses
+        cuts = [dataclasses.replace(c, bar_mark=f"{gambar_kode}/{c.bar_mark}")
+                for c in cuts]
     agg = agregasi(cuts)
     hasil_opt = optimize_all(agg, cfg)
     return cuts, agg, hasil_opt
+
+
+# ── akses VPS (PATCH-02 §3) — opsi 3 default ───────────────
+# Bind bukan 127.0.0.1 → baca boleh publik, TULIS hanya dari localhost.
+def tulis_local_only(f):
+    from functools import wraps
+    @wraps(f)
+    def w(*a, **k):
+        addr = request.remote_addr or ""
+        if addr not in ("127.0.0.1", "::1"):
+            return jsonify({
+                "ok": False,
+                "error": "Endpoint tulis hanya bisa dipakai dari localhost "
+                         "(akses VPS publik = baca saja). SSH ke VPS atau "
+                         "gunakan SSH tunnel."}), 403
+        return f(*a, **k)
+    return w
 
 
 # ── routes ─────────────────────────────────────────────────
@@ -378,17 +406,30 @@ def api_projects():
 
 @app.get("/api/projects/<kode>")
 def api_project_get(kode):
+    import yaml
+    # berlapis: projects/{kode}/project.yaml (default proyek)
+    berlapis_f = CONFIG_DIR / "projects" / kode / "project.yaml"
+    if berlapis_f.exists():
+        tpl_f = CONFIG_DIR / "projects" / kode / "templates.yaml"
+        if tpl_f.exists():
+            cfg_d = yaml.safe_load(berlapis_f.read_text())
+            tpl_d = yaml.safe_load(tpl_f.read_text())
+            cfg_d.pop("_meta", None)
+            tpl_d.pop("_meta", None)
+            return jsonify({"ok": True, "kode": kode,
+                            "config": cfg_d, "templates": tpl_d,
+                            "berlapis": True})
+    # flat legacy: projects/{kode}.yaml
     p = CONFIG_DIR / "projects" / f"{kode}.yaml"
     t = CONFIG_DIR / "templates" / f"{kode}.yaml"
     if not p.exists() or not t.exists():
         return jsonify({"ok": False, "error": f"Proyek '{kode}' tidak ada."}), 404
-    import yaml
     cfg_d = yaml.safe_load(p.read_text())
     tpl_d = yaml.safe_load(t.read_text())
     cfg_d.pop("_meta", None)
     tpl_d.pop("_meta", None)
     return jsonify({"ok": True, "kode": kode,
-                    "config": cfg_d, "templates": tpl_d})
+                    "config": cfg_d, "templates": tpl_d, "berlapis": False})
 
 
 @app.post("/api/projects")
@@ -451,21 +492,214 @@ def api_project_yaml(kode):
                      mimetype="text/yaml")
 
 
-# ── akses VPS (PATCH-02 §3) — opsi 3 default ───────────────
-# Bind bukan 127.0.0.1 → baca boleh publik, TULIS hanya dari localhost.
-def tulis_local_only(f):
-    from functools import wraps
-    @wraps(f)
-    def w(*a, **k):
-        addr = request.remote_addr or ""
-        if addr not in ("127.0.0.1", "::1"):
-            return jsonify({
-                "ok": False,
-                "error": "Endpoint tulis hanya bisa dipakai dari localhost "
-                         "(akses VPS publik = baca saja). SSH ke VPS atau "
-                         "gunakan SSH tunnel."}), 403
-        return f(*a, **k)
-    return w
+# ── drawings berlapis (08-SPEC-config-berlapis) ────────────
+def _drawing_path(proyek, gambar):
+    return CONFIG_DIR / "projects" / proyek / "drawings" / f"{gambar}.yaml"
+
+
+def _asal_nilai(proj_cfg_d, override_d):
+    """Asal tiap nilai: 'proyek' atau 'gambar'. Deep compare per key."""
+    out = {}
+    # cover
+    out["selimut_beton_mm"] = {
+        str(k): {"nilai": v, "asal": "gambar" if str(k) in
+                 {str(x) for x in (override_d.get("selimut_beton_mm") or {})}
+                 else "proyek"}
+        for k, v in (proj_cfg_d.get("selimut_beton_mm") or {}).items()}
+    ovr_cover = override_d.get("selimut_beton_mm") or {}
+    for k, v in ovr_cover.items():
+        out["selimut_beton_mm"][str(k)] = {"nilai": v, "asal": "gambar"}
+    # ld
+    out["panjang_penyaluran_mm"] = {
+        str(k): {"nilai": v, "asal": "gambar" if str(k) in
+                 {str(x) for x in (override_d.get("panjang_penyaluran_mm") or {})}
+                 else "proyek"}
+        for k, v in (proj_cfg_d.get("panjang_penyaluran_mm") or {}).items()}
+    ovr_ld = override_d.get("panjang_penyaluran_mm") or {}
+    for k, v in ovr_ld.items():
+        out["panjang_penyaluran_mm"][str(k)] = {"nilai": v, "asal": "gambar"}
+    # lap
+    out["lap_splice_mm"] = {
+        str(k): {"nilai": v, "asal": "gambar" if str(k) in
+                 {str(x) for x in (override_d.get("lap_splice_mm") or {})}
+                 else "proyek"}
+        for k, v in (proj_cfg_d.get("lap_splice_mm") or {}).items()}
+    ovr_lap = override_d.get("lap_splice_mm") or {}
+    for k, v in ovr_lap.items():
+        out["lap_splice_mm"][str(k)] = {"nilai": v, "asal": "gambar"}
+    # hook tail
+    out["hook_tail"] = {}
+    ovr_hook = override_d.get("hook") or {}
+    for sudut in ("tail_135_mm", "tail_90_mm"):
+        base = (proj_cfg_d.get("hook") or {}).get(sudut, {})
+        ovr = ovr_hook.get(sudut, {})
+        out["hook_tail"][sudut] = {
+            str(k): {"nilai": v, "asal": "gambar" if str(k) in
+                     {str(x) for x in ovr} else "proyek"}
+            for k, v in base.items()}
+        for k, v in ovr.items():
+            out["hook_tail"][sudut][str(k)] = {"nilai": v, "asal": "gambar"}
+    # sengkang
+    out["sengkang"] = {}
+    base_sk = proj_cfg_d.get("sengkang") or {}
+    ovr_sk = override_d.get("sengkang") or {}
+    for k in ("zona_tumpuan_faktor", "jarak_sengkang_pertama_mm", "metode_hitung"):
+        out["sengkang"][k] = {"nilai": ovr_sk.get(k, base_sk.get(k)),
+                              "asal": "gambar" if k in ovr_sk else "proyek"}
+    return out
+
+
+@app.get("/api/projects/<proyek>/drawings")
+def api_drawings(proyek):
+    return jsonify({"ok": True, "proyek": proyek,
+                    "drawings": list_drawings(CONFIG_DIR / "projects", proyek)})
+
+
+@app.get("/api/projects/<proyek>/drawings/<gambar>")
+def api_drawing_get(proyek, gambar):
+    import yaml
+    p = _drawing_path(proyek, gambar)
+    if not p.exists():
+        return jsonify({"ok": False,
+                        "error": f"Gambar '{gambar}' tidak ada."}), 404
+    d = yaml.safe_load(p.read_text()) or {}
+    d.pop("_meta", None)
+    # config efektif + asal nilai
+    try:
+        cfg, templates, info = load_layered(CONFIG_DIR / "projects", proyek, gambar)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    # dict cfg default proyek utk perbandingan asal
+    proj_d = yaml.safe_load(
+        (CONFIG_DIR / "projects" / proyek / "project.yaml").read_text())
+    proj_d.pop("_meta", None)
+    asal = _asal_nilai(proj_d, d.get("override") or {})
+    return jsonify({"ok": True, "kode": gambar,
+                    "drawing": {k: v for k, v in d.items() if k != "override"},
+                    "override": d.get("override", {}),
+                    "asal": asal,
+                    "config_efektif": _config_dict(cfg),
+                    "templates": _templates_dict(templates)})
+
+
+@app.post("/api/projects/<proyek>/drawings")
+@tulis_local_only
+def api_drawing_create(proyek):
+    import yaml
+    data = request.get_json(force=True) or {}
+    kode = str(data.get("kode", "")).strip()
+    if not _valid_kode(kode):
+        return jsonify({"ok": False,
+                        "error": "kode gambar tidak valid."}), 400
+    nama = str(data.get("nama", "")).strip()
+    revisi = str(data.get("revisi", "")).strip()
+    tanggal = str(data.get("tanggal", "")).strip()
+    if not nama or not revisi or not tanggal:
+        return jsonify({"ok": False,
+                        "error": "nama, revisi, dan tanggal wajib."}), 400
+    p = _drawing_path(proyek, kode)
+    if p.exists():
+        return jsonify({"ok": False,
+                        "error": f"Gambar '{kode}' sudah ada."}), 409
+    from datetime import datetime
+    ts = datetime.now().astimezone().replace(microsecond=0).isoformat()
+    drawing = {
+        "kode": kode, "nama": nama, "revisi": revisi, "tanggal": tanggal,
+        "catatan": str(data.get("catatan", "")),
+        "override": {},
+        "_meta": {"dibuat_via": "web", "dibuat_pada": ts},
+    }
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump(drawing, allow_unicode=True))
+    return jsonify({"ok": True, "kode": kode}), 201
+
+
+@app.put("/api/projects/<proyek>/drawings/<gambar>")
+@tulis_local_only
+def api_drawing_update(proyek, gambar):
+    """Simpan override gambar — arsip lama + revisi wajib (per gambar)."""
+    import shutil
+    import tempfile
+    import yaml
+    data = request.get_json(force=True) or {}
+    p = _drawing_path(proyek, gambar)
+    if not p.exists():
+        return jsonify({"ok": False,
+                        "error": f"Gambar '{gambar}' tidak ada."}), 404
+    old_d = yaml.safe_load(p.read_text()) or {}
+    old_ovr = old_d.get("override", {}) or {}
+    new_ovr = data.get("override", {}) or {}
+
+    # validasi hasil resolusi via loader (tempfile): gambar baru + override
+    # cek kelengkapan diameter terhadap template
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            proj_src = CONFIG_DIR / "projects" / proyek / "project.yaml"
+            tpl_src = CONFIG_DIR / "projects" / proyek / "templates.yaml"
+            td_proj = td / "proj"
+            td_proj.mkdir()
+            (td_proj / "project.yaml").write_text(proj_src.read_text())
+            (td_proj / "templates.yaml").write_text(tpl_src.read_text())
+            (td_proj / "drawings").mkdir()
+            (td_proj / "drawings" / f"{gambar}.yaml").write_text(
+                yaml.safe_dump({"override": new_ovr}))
+            load_layered(td, "proj", gambar)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+    # revisi wajib kalau override berubah
+    if new_ovr != old_ovr:
+        old_rev = str(old_d.get("revisi", "")).strip()
+        new_rev = str(data.get("revisi", data.get("revisi", old_rev)) or "").strip()
+        if data.get("revisi"):
+            new_rev = str(data["revisi"]).strip()
+        koreksi = bool(data.get("koreksi_bukan_revisi", False))
+        catatan = str(data.get("catatan", "")).strip()
+        if old_rev and new_rev == old_rev and not koreksi:
+            return jsonify({"ok": False, "error":
+                f"Nilai teknis berubah tapi revisi gambar masih sama "
+                f"({old_rev}). Kalau ini koreksi salah ketik, tulis alasannya "
+                f"di catatan dan centang 'koreksi, bukan revisi gambar'. "
+                f"Kalau gambar memang direvisi, isi revisi yang baru."}), 400
+        if koreksi and not catatan:
+            return jsonify({"ok": False,
+                            "error": "Catatan wajib diisi kalau centang "
+                                     "'koreksi, bukan revisi gambar'."}), 400
+
+    # arsip per gambar
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    arsip_dir = CONFIG_DIR / "projects" / proyek / "_arsip"
+    arsip_dir.mkdir(exist_ok=True)
+    arsip = arsip_dir / f"{gambar}_{ts}.yaml"
+    shutil.copy2(p, arsip)
+
+    # tulis baru (override saja + metadata; _meta diubah_dari)
+    new_d = {
+        "kode": gambar,
+        "nama": str(data.get("nama", old_d.get("nama", gambar))),
+        "revisi": new_rev or str(old_d.get("revisi", "")),
+        "tanggal": str(data.get("tanggal", old_d.get("tanggal", ""))),
+        "catatan": str(data.get("catatan", old_d.get("catatan", ""))),
+        "override": new_ovr,
+        "_meta": {"dibuat_via": "web",
+                  "dibuat_pada": datetime.now().astimezone()
+                  .replace(microsecond=0).isoformat(),
+                  "diubah_dari": arsip.name},
+    }
+    p.write_text(yaml.safe_dump(new_d, allow_unicode=True))
+    return jsonify({"ok": True, "kode": gambar, "arsip": arsip.name})
+
+
+@app.get("/api/projects/<proyek>/drawings/<gambar>/yaml")
+def api_drawing_yaml(proyek, gambar):
+    p = _drawing_path(proyek, gambar)
+    if not p.exists():
+        return jsonify({"ok": False,
+                        "error": f"Gambar '{gambar}' tidak ada."}), 404
+    return send_file(p, as_attachment=True,
+                     download_name=f"{gambar}.yaml", mimetype="text/yaml")
 
 
 @app.get("/api/config")
@@ -574,11 +808,14 @@ def api_config_update():
                     "arsip": arsip_old.name if arsip_old else None})
 
 
-def _load_config(kode=None):
-    """Load config — proyek by kode (F3.6), fallback legacy kalau kode kosong."""
-    if kode:
-        return load_project(CONFIG_DIR, kode)
-    return load_all(CONFIG_DIR)
+def _load_config(proyek=None, gambar=None):
+    """Load config — berlapis (proyek+gambar, 08) / flat legacy / legacy."""
+    if proyek and gambar:
+        return load_layered(CONFIG_DIR / "projects", proyek, gambar)   # (cfg, templates, info)
+    if proyek:
+        cfg, templates = load_project(CONFIG_DIR, proyek)  # flat F3.6
+        return cfg, templates, None
+    return (*load_all(CONFIG_DIR), None)
 
 
 def _override_diff(cfg_lama, cfg_baru) -> list[str]:
@@ -622,12 +859,13 @@ def api_hitung():
     data = request.get_json(force=True) or {}
     rows = data.get("elemen", [])
     override = data.get("override", {}) or {}
-    kode = data.get("kode") or ""
+    proyek = data.get("proyek") or data.get("kode") or ""
+    gambar = data.get("gambar") or ""
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
 
     try:
-        cfg, templates = _load_config(kode)
+        cfg, templates, info = _load_config(proyek, gambar)
     except ConfigError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     elemen, errors = _baca_elemen_json(rows)
@@ -636,7 +874,8 @@ def api_hitung():
 
     try:
         cfg_efektif = _apply_override(cfg, override)
-        cuts, agg, hasil_opt = _hitung(cfg_efektif, templates, elemen)
+        cuts, agg, hasil_opt = _hitung(cfg_efektif, templates, elemen,
+                                       gambar_kode=gambar or (info or {}).get("kode"))
     except (ConfigError, LengthExceedsStockError, InfeasiblePatternError,
             ValueError) as e:
         resp = {"ok": False, "error": str(e)}
@@ -655,6 +894,7 @@ def api_hitung():
 
     return jsonify({
         "ok": True,
+        "proyek": proyek, "gambar": gambar, "info_gambar": info,
         "config": _config_dict(cfg_efektif),
         "override_aktif": list(override.keys()),
         "override_diff": diff,
@@ -675,12 +915,13 @@ def api_export():
     data = request.get_json(force=True) or {}
     rows = data.get("elemen", [])
     override = data.get("override", {}) or {}
-    kode = data.get("kode") or ""
+    proyek = data.get("proyek") or data.get("kode") or ""
+    gambar = data.get("gambar") or ""
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
 
     try:
-        cfg, templates = _load_config(kode)
+        cfg, templates, info = _load_config(proyek, gambar)
     except ConfigError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     elemen, errors = _baca_elemen_json(rows)
@@ -688,7 +929,8 @@ def api_export():
         return jsonify({"ok": False, "error": "\n".join(errors)}), 400
     try:
         cfg_efektif = _apply_override(cfg, override)
-        cuts, agg, hasil_opt = _hitung(cfg_efektif, templates, elemen)
+        cuts, agg, hasil_opt = _hitung(cfg_efektif, templates, elemen,
+                                       gambar_kode=gambar or (info or {}).get("kode"))
     except (ConfigError, LengthExceedsStockError, InfeasiblePatternError,
             ValueError) as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -697,9 +939,14 @@ def api_export():
     out_dir = ROOT / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_path = out_dir / f"BBS_{cfg_efektif.kode}_{ts}.xlsx"
+    g = (gambar or (info or {}).get("kode") or "")
+    nama = f"BBS_{cfg_efektif.kode}"
+    if g:
+        nama += f"_{g}"
+    nama += f"_{ts}.xlsx"
+    out_path = out_dir / nama
     generate_excel(cfg_efektif, elemen, cuts, hasil_opt, ROOT / "config",
-                   out_path, override_info=diff)
+                   out_path, override_info=diff, gambar_info=info)
     return send_file(out_path, as_attachment=True,
                      download_name=out_path.name)
 

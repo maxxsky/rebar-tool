@@ -220,13 +220,11 @@ def test_uji_silang_config_web_vs_tulis_tangan(client, tmp_path):
 
 # ── /api/hitung dengan kode ────────────────────────────────
 def test_api_hitung_dengan_kode(client):
-    cleanup("HIT01")
-    client.post("/api/projects", json=payload_valid("HIT01"))
+    # PATCH-06 §2: proyek+gambar wajib — pakai PRJ-001/GS-01
     r = client.post("/api/hitung", json={
-        "kode": "HIT01",
+        "proyek": "PRJ-001", "gambar": "GS-01",
         "elemen": [{"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1}],
     })
     d = r.get_json()
     assert d["ok"] is True, d
     assert len(d["bbs"]) >= 1
-    cleanup("HIT01")

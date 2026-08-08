@@ -13,7 +13,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "web"))
 
 from bbs import agregasi, generate_bbs
-from config_loader import load_all
+from config_loader import load_all, load_layered
 from models import ElemenInput
 from optimizer import optimize_all
 
@@ -29,7 +29,8 @@ def client():
 
 @pytest.fixture(scope="module")
 def elemen_payload():
-    return {"elemen": [
+    # PATCH-06 §2: proyek & gambar wajib — pakai PRJ-001/GS-01 (identik legacy)
+    return {"proyek": "PRJ-001", "gambar": "GS-01", "elemen": [
         {"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 12, "lokasi": "Lt.2"},
         {"tipe": "B1", "bentang_bersih_mm": 5400, "jumlah": 8, "lokasi": "Lt.2"},
         {"tipe": "B2", "bentang_bersih_mm": 4000, "jumlah": 20, "lokasi": "Lt.2"},
@@ -37,8 +38,10 @@ def elemen_payload():
 
 
 def _hasil_cli(elemen, override=None):
-    """Hitung langsung via modul — ini pembanding CLI (uji silang)."""
-    cfg, templates = load_all(CONFIG_DIR)
+    """Hitung langsung via modul — pembanding CLI (uji silang). Pakai
+    load_layered PRJ-001/GS-01 — sama seperti web (PATCH-06 §2)."""
+    cfg, templates, _info = load_layered(CONFIG_DIR / "projects", "PRJ-001",
+                                         "GS-01")
     if override:
         from app import _apply_override
         cfg = _apply_override(cfg, override)
@@ -141,7 +144,8 @@ def test_override_luas_ld(client, elemen_payload):
 
 # ── error baris ────────────────────────────────────────────
 def test_error_menyebut_nomor_baris(client):
-    d = client.post("/api/hitung", json={"elemen": [
+    d = client.post("/api/hitung", json={
+        "proyek": "PRJ-001", "gambar": "GS-01", "elemen": [
         {"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1},
         {"tipe": "B9", "bentang_bersih_mm": 4000, "jumlah": 1},
     ]}).get_json()
@@ -151,7 +155,8 @@ def test_error_menyebut_nomor_baris(client):
 
 
 def test_error_bentang_negatif_menyebut_baris(client):
-    d = client.post("/api/hitung", json={"elemen": [
+    d = client.post("/api/hitung", json={
+        "proyek": "PRJ-001", "gambar": "GS-01", "elemen": [
         {"tipe": "B1", "bentang_bersih_mm": -5, "jumlah": 1},
     ]}).get_json()
     assert d["ok"] is False

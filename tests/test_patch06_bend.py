@@ -121,10 +121,25 @@ def test_export_proyek_tanpa_gambar_ditolak(client):
     assert "gambar" in r.get_json()["error"].lower()
 
 
-def test_hitung_keduanya_kosong_legacy(client):
-    # keduanya kosong → path legacy tetap jalan (test lama & F3.5)
+def test_hitung_keduanya_kosong_ditolak(client):
+    # PATCH-06 §2 literal: tanpa proyek DAN gambar → 400, bukan pakai default
     r = client.post("/api/hitung", json={"elemen": [
         {"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1}]})
+    assert r.status_code == 400
+    assert "proyek" in r.get_json()["error"].lower()
+
+
+def test_export_keduanya_kosong_ditolak(client):
+    r = client.post("/api/export", json={"elemen": [
+        {"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1}]})
+    assert r.status_code == 400
+    assert "proyek" in r.get_json()["error"].lower()
+
+
+def test_hitung_proyek_gambar_lengkap_ok(client):
+    r = client.post("/api/hitung", json={
+        "proyek": "PRJ-001", "gambar": "GS-01", "elemen": [
+            {"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1}]})
     assert r.status_code == 200, r.get_json()
 
 

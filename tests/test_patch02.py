@@ -169,9 +169,9 @@ def test_tulis_ditolak_dari_non_localhost(client):
 
 # ── override luas + diff ───────────────────────────────────
 def test_override_luas_dan_diff(client):
-    _cleanup(); _setup()
+    # PATCH-06 §2: proyek+gambar wajib — pakai PRJ-001/GS-01 (Ld D19=760)
     r = client.post("/api/hitung", json={
-        "kode": "P2A",
+        "proyek": "PRJ-001", "gambar": "GS-01",
         "elemen": [{"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1}],
         "override": {"ld": {"10": 400, "13": 520, "19": 1000},
                      "kerf_mm": 5}})
@@ -184,16 +184,14 @@ def test_override_luas_dan_diff(client):
     txt = "\n".join(d["override_diff"])
     assert "Ld D19" in txt and "760" in txt and "1000" in txt
     assert "kerf_mm" in txt
-    _cleanup()
 
 
 # ── Excel dengan override → header warning ─────────────────
 def test_export_override_warning_header(client, tmp_path):
-    _cleanup(); _setup()
     import io
     from openpyxl import load_workbook
     r = client.post("/api/export", json={
-        "kode": "P2A",
+        "proyek": "PRJ-001", "gambar": "GS-01",
         "elemen": [{"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1}],
         "override": {"kerf_mm": 5}})
     assert r.status_code == 200

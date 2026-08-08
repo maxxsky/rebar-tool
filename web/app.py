@@ -928,24 +928,19 @@ def api_hitung():
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
 
-    # PATCH-06 §2 — jangan diam-diam pakai default kalau salah satu kosong.
-    # Berlaku untuk proyek BERLAPIS (punya folder projects/{kode}/ — konsep
-    # gambar). Proyek flat legacy (F3.6, satu file .yaml) tidak punya gambar.
-    # Keduanya kosong = legacy (test lama & F3.5 path); SATU kosong = user
-    # nyebut proyek/gambar tapi lupa pasangannya → hasil bisa dari gambar
-    # yang salah tanpa tanda apa pun (08-SPEC §9).
-    berlapis = (CONFIG_DIR / "projects" / proyek / "project.yaml").exists() \
-        if proyek else False
-    if berlapis and not gambar:
+    # PATCH-06 §2 — proyek & gambar WAJIB. Tanpa keduanya, perhitungan diam-diam
+    # memakai default dan user bisa dapat hasil dari gambar yang salah.
+    # Kosong → 400, sebut field yang kurang + daftar gambar tersedia.
+    if not proyek:
+        return jsonify({"ok": False, "error":
+            "Field 'proyek' wajib diisi."}), 400
+    if not gambar:
         daftar = [d["kode"] for d in
                   list_drawings(CONFIG_DIR / "projects", proyek)]
         tersedia = ", ".join(daftar) if daftar else "(proyek belum punya gambar)"
         return jsonify({"ok": False, "error":
-            f"Field 'gambar' wajib diisi kalau 'proyek' disebut. "
-            f"Proyek '{proyek}' — gambar tersedia: {tersedia}."}), 400
-    if gambar and not proyek:
-        return jsonify({"ok": False, "error":
-            "Field 'proyek' wajib diisi kalau 'gambar' disebut."}), 400
+            f"Field 'gambar' wajib diisi. Proyek '{proyek}' — "
+            f"gambar tersedia: {tersedia}."}), 400
 
     try:
         cfg, templates, info = _load_config(proyek, gambar)
@@ -1006,19 +1001,17 @@ def api_export():
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
 
-    # PATCH-06 §2 — sama seperti /api/hitung (khusus proyek berlapis)
-    berlapis = (CONFIG_DIR / "projects" / proyek / "project.yaml").exists() \
-        if proyek else False
-    if berlapis and not gambar:
+    # PATCH-06 §2 — proyek & gambar WAJIB (sama seperti /api/hitung)
+    if not proyek:
+        return jsonify({"ok": False, "error":
+            "Field 'proyek' wajib diisi."}), 400
+    if not gambar:
         daftar = [d["kode"] for d in
                   list_drawings(CONFIG_DIR / "projects", proyek)]
         tersedia = ", ".join(daftar) if daftar else "(proyek belum punya gambar)"
         return jsonify({"ok": False, "error":
-            f"Field 'gambar' wajib diisi kalau 'proyek' disebut. "
-            f"Proyek '{proyek}' — gambar tersedia: {tersedia}."}), 400
-    if gambar and not proyek:
-        return jsonify({"ok": False, "error":
-            "Field 'proyek' wajib diisi kalau 'gambar' disebut."}), 400
+            f"Field 'gambar' wajib diisi. Proyek '{proyek}' — "
+            f"gambar tersedia: {tersedia}."}), 400
 
     try:
         cfg, templates, info = _load_config(proyek, gambar)

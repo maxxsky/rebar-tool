@@ -126,3 +126,27 @@ def test_hitung_keduanya_kosong_legacy(client):
     r = client.post("/api/hitung", json={"elemen": [
         {"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 1}]})
     assert r.status_code == 200, r.get_json()
+
+
+# ── PATCH-06 §3-4 — lokasi & berat dari backend ────────────
+def test_bbs_row_punya_lokasi_total_dan_berat(client):
+    r = client.post("/api/hitung", json={
+        "proyek": "PRJ-001", "gambar": "GS-01",
+        "elemen": [{"tipe": "B1", "bentang_bersih_mm": 6000, "jumlah": 12,
+                    "lokasi": "Lt.2"}]})
+    assert r.status_code == 200, r.get_json()
+    d = r.get_json()
+    assert d["ok"] is True
+    sk = [b for b in d["bbs"] if b["posisi"] == "sengkang"][0]
+    # §3: lokasi dikirim backend
+    assert sk["lokasi"] == "Lt.2"
+    # §4: total_m & berat_kg dari backend — konsisten dengan hitung manual
+    assert abs(sk["total_m"] - (1640 / 1000 * 408)) < 0.01
+    assert abs(sk["berat_kg"] - (1640 / 1000 * 408 * 0.617)) < 0.01
+    # total blok punya total_panjang_m
+    assert abs(d["total"]["total_panjang_m"] -
+               sum(b["total_m"] for b in d["bbs"])) < 0.01
+    # optimizer per dia kirim berat_kg — konsisten dgn total panjang terpakai
+    opt10 = d["optimizer"]["10"]
+    assert abs(opt10["berat_kg"] -
+               (opt10["total_panjang_terpakai_mm"] / 1000 * 0.617)) < 0.01

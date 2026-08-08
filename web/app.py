@@ -235,7 +235,7 @@ def _config_dict(cfg):
     }
 
 
-def _opt_dict(res):
+def _opt_dict(res, unit_weight=None):
     return {
         "dia": res.dia,
         "patterns": [{"potongan": list(p.potongan), "frekuensi": p.frekuensi,
@@ -250,13 +250,21 @@ def _opt_dict(res):
         "waste_kotor_pct": res.waste_kotor_pct,
         "pola_sebelum_batasi": res.pola_sebelum_batasi,
         "pola_sesudah_batasi": res.pola_sesudah_batasi,
+        # PATCH-06 §4: berat dihitung backend — JS tidak menghitung ulang
+        "berat_kg": round(res.total_panjang_terpakai_mm / 1000 *
+                          (unit_weight or {}).get(res.dia, 0), 2),
     }
 
 
-def _bbs_dict(c):
+def _bbs_dict(c, unit_weight=None):
+    """c = Cut (bisa agregat). total_m & berat_kg DARI BACKEND — JS & Excel
+    memakai nilai yang sama, tidak menghitung ulang (PATCH-06 §4)."""
+    total_m = c.panjang_mm / 1000 * c.jumlah
     return {"bar_mark": c.bar_mark, "lokasi": c.lokasi, "tipe": c.tipe_elemen,
             "posisi": c.posisi, "shape": c.shape_code, "dia": c.dia,
             "panjang_mm": c.panjang_mm, "jumlah": c.jumlah,
+            "total_m": round(total_m, 3),
+            "berat_kg": round(total_m * (unit_weight or {}).get(c.dia, 0), 2),
             "segmen_mm": list(c.segmen_mm)}
 
 
@@ -960,10 +968,12 @@ def api_hitung():
 
     diff = _override_diff(cfg, cfg_efektif)
 
-    # agregasi per diameter utk BBS tampilan
-    bbs_rows = [_bbs_dict(c) for c in agg]
-    total_berat = sum(c.panjang_mm / 1000 * c.jumlah * cfg_efektif.unit_weight[c.dia]
+    # agregasi per diameter utk BBS tampilan — berat & total DARI BACKEND
+    uw = cfg_efektif.unit_weight
+    bbs_rows = [_bbs_dict(c, uw) for c in agg]
+    total_berat = sum(c.panjang_mm / 1000 * c.jumlah * uw[c.dia]
                       for c in agg)
+    total_panjang_m = sum(c.panjang_mm / 1000 * c.jumlah for c in agg)
     total_batang = sum(r.total_batang for r in hasil_opt.values())
     total_waste = sum(r.total_sisa_mm for r in hasil_opt.values())
 
@@ -974,10 +984,11 @@ def api_hitung():
         "override_aktif": list(override.keys()),
         "override_diff": diff,
         "bbs": bbs_rows,
-        "optimizer": {str(d): _opt_dict(r) for d, r in
+        "optimizer": {str(d): _opt_dict(r, uw) for d, r in
                       sorted(hasil_opt.items())},
         "total": {
             "berat_kg": round(total_berat, 2),
+            "total_panjang_m": round(total_panjang_m, 3),
             "batang": total_batang,
             "sisa_mm": total_waste,
             "baris_bbs": len(bbs_rows),

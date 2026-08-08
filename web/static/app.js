@@ -325,26 +325,22 @@ function renderStat(t) {
 function renderBBS(rows, d) {
   const box = $('tab-bbs');
   if (!rows.length) { box.innerHTML = '<div class="kosong">Tekan Hitung untuk melihat hasil.</div>'; return; }
-  const uw = d.config.unit_weight;
+  // total_m & berat_kg dikirim backend (PATCH-06 §4) — JS TIDAK menghitung ulang
   let totalBerat = 0, totalPanjang = 0;
+  rows.forEach(r => { totalBerat += r.berat_kg || 0; totalPanjang += r.total_m || 0; });
   let html = `<table><thead><tr>
-    <th>Bar Mark</th><th>Posisi</th><th>Shape</th><th>Ø</th>
+    <th>Bar Mark</th><th>Lokasi</th><th>Posisi</th><th>Shape</th><th>Ø</th>
     <th class="num">Panjang (m)</th><th class="num">Jumlah</th>
     <th class="num">Total (m)</th><th class="num">Berat (kg)</th></tr></thead><tbody>`;
   rows.forEach(r => {
-    const pM = fmtM(r.panjang_mm);
-    const totM = r.panjang_mm / 1000 * r.jumlah;
-    const berat = totM * (uw[r.dia] || 0);
-    totalPanjang += totM;
-    totalBerat += berat;
     html += `<tr>
-      <td>${escapeHtml(r.bar_mark || '')}</td><td>${escapeHtml(r.posisi)}</td>
+      <td>${escapeHtml(r.bar_mark || '')}</td><td>${escapeHtml(r.lokasi || '')}</td><td>${escapeHtml(r.posisi)}</td>
       <td>${escapeHtml(r.shape)}</td><td>${r.dia}</td>
-      <td class="num">${pM}</td><td class="num">${r.jumlah}</td>
-      <td class="num">${fmtKg(totM)}</td><td class="num">${fmtKg(berat)}</td>
+      <td class="num">${fmtM(r.panjang_mm)}</td><td class="num">${r.jumlah}</td>
+      <td class="num">${fmtKg(r.total_m)}</td><td class="num">${fmtKg(r.berat_kg)}</td>
     </tr>`;
   });
-  html += `<tr class="total"><td colspan="6">TOTAL</td>
+  html += `<tr class="total"><td colspan="7">TOTAL</td>
     <td class="num">${fmtKg(totalPanjang)}</td>
     <td class="num">${fmtKg(totalBerat)}</td></tr></tbody></table>`;
   box.innerHTML = html;
@@ -355,7 +351,6 @@ function renderPola(opt) {
   const dias = Object.keys(opt).map(Number).sort((a, b) => a - b);
   if (!dias.length) { box.innerHTML = '<div style="color:#5b6572">—</div>'; return; }
   const cfg = lastResult.config;
-  const uw = cfg.unit_weight;
   const stok = cfg.stok_mm, kerf = cfg.kerf_mm;
   let html = '';
   dias.forEach(dia => {
@@ -369,7 +364,7 @@ function renderPola(opt) {
     html += `<div class="dia-block">
       <div class="dia-head">D${dia}${flag}</div>
       <div class="dia-meta">${r.patterns.length} pola · ${r.total_batang} batang · ` +
-      `berat ${fmtKg(r.total_panjang_terpakai_mm / 1000 * (uw[dia] || 0))} kg · ` +
+      `berat ${fmtKg(r.berat_kg)} kg · ` +
       `waste bersih ${r.waste_pct.toFixed(2)}% · kotor ${r.waste_kotor_pct.toFixed(2)}% · ` +
       `sisa simpan ${(r.sisa_reusable_mm / 1000).toFixed(2)} m</div>`;
     r.patterns.forEach((p, i) => {

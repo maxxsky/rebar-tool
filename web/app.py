@@ -103,7 +103,7 @@ def _apply_override(cfg, override: dict):
     KNOWN = {"metode_hitung", "zona_tumpuan_faktor", "kerf_mm",
              "sisa_min_simpan_mm", "stok", "cover", "ld", "lap",
              "unit_weight", "hook_tail", "bend_factor",
-             "koreksi_bend_aktif", "sengkang"}
+             "koreksi_bend_aktif", "bend_deduction_faktor", "sengkang"}
     asing = set(override) - KNOWN
     if asing:
         raise ConfigError(
@@ -118,6 +118,7 @@ def _apply_override(cfg, override: dict):
     cover = dict(cfg.cover)
     hook_tail = {s: dict(m) for s, m in cfg.hook_tail.items()}
     bend = cfg.bend_factor
+    bend_f = dict(cfg.bend_faktor)
     koreksi = cfg.koreksi_bend_aktif
 
     # ── flat legacy (4 field) ──
@@ -164,6 +165,9 @@ def _apply_override(cfg, override: dict):
         bend = int(_num(override["bend_factor"], "bend_factor"))
     if "koreksi_bend_aktif" in override:
         koreksi = bool(override["koreksi_bend_aktif"])
+    if "bend_deduction_faktor" in override:
+        bend_f = {int(k): int(_num(v, f"bend_deduction_faktor.{k}"))
+                  for k, v in override["bend_deduction_faktor"].items()}
     if "sengkang" in override:
         s = override["sengkang"]
         if "zona_tumpuan_faktor" in s:
@@ -181,7 +185,8 @@ def _apply_override(cfg, override: dict):
 
     return dataclasses.replace(cfg, sengkang_cfg=sk, stok=stok, ld=ld, lap=lap,
                                unit_weight=uw, cover=cover, hook_tail=hook_tail,
-                               bend_factor=bend, koreksi_bend_aktif=koreksi)
+                               bend_factor=bend, bend_faktor=bend_f,
+                               koreksi_bend_aktif=koreksi)
 
 
 def _templates_dict(templates):
@@ -200,7 +205,8 @@ def _templates_dict(templates):
                          "jarak_tumpuan_mm": t.sengkang.jarak_tumpuan_mm,
                          "jarak_lapangan_mm": t.sengkang.jarak_lapangan_mm,
                          "kaki": t.sengkang.kaki,
-                         "hook_sudut": t.sengkang.hook_sudut},
+                         "hook_sudut": t.sengkang.hook_sudut,
+                         "bengkokan": dict(t.sengkang.bengkokan)},
         }
     return out
 
@@ -218,6 +224,8 @@ def _config_dict(cfg):
         "ld": {str(k): v for k, v in sorted(cfg.ld.items())},
         "hook_tail": {str(s): {str(d): v for d, v in sorted(m.items())}
                       for s, m in sorted(cfg.hook_tail.items())},
+        "bend_deduction_faktor": {str(k): v for k, v in
+                                  sorted(cfg.bend_faktor.items())},
         "metode_hitung": cfg.sengkang_cfg.metode_hitung,
         "zona_tumpuan_faktor": cfg.sengkang_cfg.zona_tumpuan_faktor,
         "jarak_sengkang_pertama_mm": cfg.sengkang_cfg.jarak_sengkang_pertama_mm,
@@ -895,6 +903,10 @@ def _override_diff(cfg_lama, cfg_baru) -> list[str]:
                 lines.append(f"sengkang.{f}: {getattr(sk_l, f)} → {getattr(sk_b, f)}")
     if cfg_lama.koreksi_bend_aktif != cfg_baru.koreksi_bend_aktif:
         lines.append(f"koreksi_bengkokan: {cfg_lama.koreksi_bend_aktif} → {cfg_baru.koreksi_bend_aktif}")
+    for s in set(cfg_lama.bend_faktor) | set(cfg_baru.bend_faktor):
+        if cfg_lama.bend_faktor.get(s) != cfg_baru.bend_faktor.get(s):
+            lines.append(f"bend_deduction_faktor {s}°: "
+                         f"{cfg_lama.bend_faktor.get(s)} → {cfg_baru.bend_faktor.get(s)}")
     return lines
 
 
@@ -907,6 +919,25 @@ def api_hitung():
     gambar = data.get("gambar") or ""
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
+
+    # PATCH-06 §2 — jangan diam-diam pakai default kalau salah satu kosong.
+    # Berlaku untuk proyek BERLAPIS (punya folder projects/{kode}/ — konsep
+    # gambar). Proyek flat legacy (F3.6, satu file .yaml) tidak punya gambar.
+    # Keduanya kosong = legacy (test lama & F3.5 path); SATU kosong = user
+    # nyebut proyek/gambar tapi lupa pasangannya → hasil bisa dari gambar
+    # yang salah tanpa tanda apa pun (08-SPEC §9).
+    berlapis = (CONFIG_DIR / "projects" / proyek / "project.yaml").exists() \
+        if proyek else False
+    if berlapis and not gambar:
+        daftar = [d["kode"] for d in
+                  list_drawings(CONFIG_DIR / "projects", proyek)]
+        tersedia = ", ".join(daftar) if daftar else "(proyek belum punya gambar)"
+        return jsonify({"ok": False, "error":
+            f"Field 'gambar' wajib diisi kalau 'proyek' disebut. "
+            f"Proyek '{proyek}' — gambar tersedia: {tersedia}."}), 400
+    if gambar and not proyek:
+        return jsonify({"ok": False, "error":
+            "Field 'proyek' wajib diisi kalau 'gambar' disebut."}), 400
 
     try:
         cfg, templates, info = _load_config(proyek, gambar)
@@ -963,6 +994,20 @@ def api_export():
     gambar = data.get("gambar") or ""
     if not rows:
         return jsonify({"ok": False, "error": "Tidak ada baris elemen."}), 400
+
+    # PATCH-06 §2 — sama seperti /api/hitung (khusus proyek berlapis)
+    berlapis = (CONFIG_DIR / "projects" / proyek / "project.yaml").exists() \
+        if proyek else False
+    if berlapis and not gambar:
+        daftar = [d["kode"] for d in
+                  list_drawings(CONFIG_DIR / "projects", proyek)]
+        tersedia = ", ".join(daftar) if daftar else "(proyek belum punya gambar)"
+        return jsonify({"ok": False, "error":
+            f"Field 'gambar' wajib diisi kalau 'proyek' disebut. "
+            f"Proyek '{proyek}' — gambar tersedia: {tersedia}."}), 400
+    if gambar and not proyek:
+        return jsonify({"ok": False, "error":
+            "Field 'proyek' wajib diisi kalau 'gambar' disebut."}), 400
 
     try:
         cfg, templates, info = _load_config(proyek, gambar)

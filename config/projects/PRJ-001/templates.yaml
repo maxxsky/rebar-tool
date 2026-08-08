@@ -12,6 +12,7 @@ balok:
       jarak_lapangan_mm: 200
       jarak_tumpuan_mm: 150
       kaki: 2
+      bengkokan: {90: 3, 135: 2}
     tulangan:
     - dia: 19
       jumlah: 4
@@ -35,6 +36,7 @@ balok:
       jarak_lapangan_mm: 150
       jarak_tumpuan_mm: 100
       kaki: 2
+      bengkokan: {90: 3, 135: 2}
     tulangan:
     - dia: 16
       jumlah: 3
@@ -54,6 +56,7 @@ balok:
       jarak_lapangan_mm: 150
       jarak_tumpuan_mm: 100
       kaki: 2
+      bengkokan: {90: 3, 135: 2}
     tulangan:
     - dia: 16
       jumlah: 3

@@ -130,6 +130,24 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         errors.append(str(e))
         bend_factor = 4
 
+    # ── bend deduction per sudut (PATCH-06 §1.5) ──
+    bend_faktor = {}
+    bd_raw = hook_raw.get("bend_deduction_faktor") or {}
+    if bd_raw:
+        if not isinstance(bd_raw, dict):
+            errors.append("hook.bend_deduction_faktor: harus mapping sudut -> "
+                          "kelipatan diameter")
+        else:
+            for sudut, faktor in bd_raw.items():
+                try:
+                    s = int(sudut)
+                    f = _norm_int(faktor, f"{sudut}", "hook.bend_deduction_faktor",
+                                  allow_zero=True)
+                except ConfigError as e:
+                    errors.append(str(e))
+                    continue
+                bend_faktor[s] = f
+
     # ── sengkang ──
     sk_raw = data.get("sengkang") or {}
     try:
@@ -185,8 +203,9 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
     return ProjectConfig(
         nama=nama, kode=kode, sumber=sumber, stok=stok, cover=cover,
         ld=ld, lap=lap, hook_tail=hook_tail, bend_factor=bend_factor,
-        unit_weight=uw, sengkang_cfg=sengkang_cfg, warnings=warnings,
-        optimizer=optimizer_cfg, koreksi_bend_aktif=koreksi_bend)
+        bend_faktor=bend_faktor, unit_weight=uw, sengkang_cfg=sengkang_cfg,
+        warnings=warnings, optimizer=optimizer_cfg,
+        koreksi_bend_aktif=koreksi_bend)
 
 
 def _load_dia_dict(raw, path, errors) -> dict:
@@ -280,12 +299,25 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
     if sk_hook not in ALLOWED_SENGKANG_HOOK:
         raise ConfigError(f"{sk_path}.hook_sudut: hanya 90 atau 135, dapat {sk_hook}")
 
+    # PATCH-06 §1.6: jumlah bengkokan per sudut — opsional.
+    bengkokan = {}
+    bk_raw = sk.get("bengkokan") or {}
+    if bk_raw:
+        if not isinstance(bk_raw, dict):
+            raise ConfigError(f"{sk_path}.bengkokan: harus mapping sudut -> jumlah")
+        for sudut, n in bk_raw.items():
+            try:
+                bengkokan[int(sudut)] = _norm_int(n, str(sudut),
+                                                  f"{sk_path}.bengkokan")
+            except ConfigError as e:
+                raise ConfigError(str(e))
+
     return ElementTemplate(
         nama=nama, tipe=tipe, deskripsi=deskripsi, b_mm=b, h_mm=h,
         tulangan=tuple(tulangan),
         sengkang=TemplateSengkang(dia=sk_dia, jarak_tumpuan_mm=sk_tt,
                                   jarak_lapangan_mm=sk_tl, kaki=sk_kaki,
-                                  hook_sudut=sk_hook))
+                                  hook_sudut=sk_hook, bengkokan=bengkokan))
 
 
 # ── validasi silang config ↔ template (spec §5.1) ───────────
@@ -394,7 +426,8 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
         "hook": {"tail_135_mm": dict(cfg.hook_tail.get(135, {})),
                  "tail_90_mm": dict(cfg.hook_tail.get(90, {})),
                  "diameter_bengkok_faktor": cfg.bend_factor,
-                 "koreksi_bengkokan_aktif": cfg.koreksi_bend_aktif},
+                 "koreksi_bengkokan_aktif": cfg.koreksi_bend_aktif,
+                 "bend_deduction_faktor": dict(cfg.bend_faktor)},
         "sengkang": {"zona_tumpuan_faktor": cfg.sengkang_cfg.zona_tumpuan_faktor,
                      "jarak_sengkang_pertama_mm":
                          cfg.sengkang_cfg.jarak_sengkang_pertama_mm,
@@ -427,6 +460,8 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
                      for k, v in merged["unit_weight_kg_per_m"].items()},
         hook_tail=hook_tail,
         bend_factor=int(merged["hook"].get("diameter_bengkok_faktor", 4)),
+        bend_faktor={int(k): int(v) for k, v in
+                     (merged["hook"].get("bend_deduction_faktor") or {}).items()},
         koreksi_bend_aktif=bool(merged["hook"].get("koreksi_bengkokan_aktif", False)),
         sengkang_cfg=sk,
         stok=StockConfig(panjang_batang_mm=int(merged["stok"]["panjang_batang_mm"]),

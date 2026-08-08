@@ -18,21 +18,38 @@ SHAPE_LURUS = "01"
 SHAPE_SENGKANG = "51"
 
 
-# ── koreksi bengkokan (spec 02 §3.1) ────────────────────────
-def koreksi_bengkokan(dia: int, cfg: ProjectConfig, jumlah_bengkokan: int = 0) -> int:
-    """Selisih panjang akibat radius bengkokan.
+# ── koreksi bengkokan (spec 02 §3.1, PATCH-06 §1) ──────────
+def bend_deduction(dia: int, bengkokan: dict, cfg: ProjectConfig) -> int:
+    """Total pengurangan panjang akibat bengkokan.
 
-    Default 0. Aktif via config.hook.koreksi_bengkokan_aktif — TAPI besaran
-    belum diverifikasi terhadap BBS asli (F4). Kalau diaktifkan tanpa nilai
-    yang sudah terbukti → fail loud, jangan pakai angka tebakan.
+    Nilai POSITIF; pemanggil yang mengurangkannya (PATCH-06 §1.6).
+
+    bengkokan: {sudut: jumlah}, mis. {90: 3, 135: 2} untuk sengkang
+    persegi 2 kaki hook 135°.
+    Besaran per bengkokan = bend_faktor[sudut] × dia, dari config —
+    TIDAK hardcoded (aturan §3.1). Default koreksi OFF sampai F4.
     """
     if not cfg.koreksi_bend_aktif:
         return 0
-    raise ConfigError(
-        "koreksi_bengkokan_aktif=true tetapi besaran koreksi belum terverifikasi "
-        "terhadap BBS asli (F4). Matikan config ini, atau isi nilai koreksi yang "
-        "sudah dibuktikan dari verifikasi. Jangan biarkan alat memakai angka "
-        "tebakan — brief §3.1.")
+    total = 0
+    for sudut, n in bengkokan.items():
+        if sudut not in cfg.bend_faktor:
+            raise ConfigError(
+                f"bend_deduction_faktor untuk {sudut}° tidak ada di config, "
+                f"tapi dipakai di template sengkang. Tambahkan ke hook: "
+                f"bend_deduction_faktor: {{{sudut}: <kelipatan dia>}} "
+                f"atau hapus sudut {sudut} dari sengkang.bengkokan.")
+        total += n * cfg.bend_faktor[sudut] * dia
+    return total
+
+
+def _bengkokan_default(hook_sudut: int) -> dict:
+    """Bentuk standar sengkang persegi 2 kaki: 3× bengkokan 90° + 2× hook.
+
+    Dipakai kalau template tidak menyebut `bengkokan` — asumsi dicatat
+    di output (PATCH-06 §1.6), jangan diam-diam.
+    """
+    return {90: 3, hook_sudut: 2}
 
 
 # ── tulangan utama ──────────────────────────────────────────
@@ -56,8 +73,13 @@ def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectCon
 
 
 # ── sengkang ────────────────────────────────────────────────
-def keliling_sengkang(b, h, dia, hook_sudut, cfg, elemen="balok") -> int:
-    """Panjang potong sengkang persegi 2 kaki — dalam selimut beton."""
+def keliling_sengkang(b, h, dia, hook_sudut, cfg, elemen="balok",
+                      bengkokan=None) -> int:
+    """Panjang potong sengkang persegi 2 kaki — dalam selimut beton.
+
+    bengkokan: {sudut: jumlah} — PATCH-06 §1.6. Kalau None, pakai bentuk
+    standar 3×90° + 2×hook (asumsi dicatat pemanggil).
+    """
     c = cfg.cover[elemen]
     lebar_dalam = b - 2 * c
     tinggi_dalam = h - 2 * c
@@ -68,9 +90,21 @@ def keliling_sengkang(b, h, dia, hook_sudut, cfg, elemen="balok") -> int:
 
     keliling = 2 * (lebar_dalam + tinggi_dalam)
     hook = 2 * cfg.hook_tail[hook_sudut][dia]
-    bend = koreksi_bengkokan(dia, cfg, jumlah_bengkokan=3)
+    bk = bengkokan if bengkokan is not None else _bengkokan_default(hook_sudut)
+    bend = bend_deduction(dia, bk, cfg)   # nilai POSITIF → dikurangi
 
-    return keliling + hook + bend
+    panjang = keliling + hook - bend
+
+    # cek kewarasan (PATCH-06 §1.6): hasil ≤ 0 atau turun > 30% dari
+    # keliling+hook = tanda faktor deduction salah isi (fail loud).
+    basis = keliling + hook
+    if panjang <= 0 or (bend > 0 and bend > 0.30 * basis):
+        raise ConfigError(
+            f"Hasil panjang sengkang {panjang} mm tidak wajar (basis "
+            f"{basis} mm, bend deduction {bend} mm). Cek nilai "
+            f"hook.bend_deduction_faktor — kemungkinan salah isi.")
+
+    return panjang
 
 
 def hitung_jumlah_sengkang(bentang: int, sk: TemplateSengkang,
@@ -105,8 +139,20 @@ def hitung_jumlah_sengkang(bentang: int, sk: TemplateSengkang,
 def generate_sengkang(tpl: ElementTemplate, bentang: int, cfg: ProjectConfig,
                       meta) -> Cut:
     sk = tpl.sengkang
+    bengkokan = dict(sk.bengkokan) if sk.bengkokan else None
+    if bengkokan is None and cfg.koreksi_bend_aktif:
+        # asumsi bentuk standar dipakai — catat, jangan diam-diam (PATCH-06 §1.6)
+        asumsi = _bengkokan_default(sk.hook_sudut)
+        pesan = (f"WARNING: template '{tpl.nama}' sengkang tidak menyebut "
+                 f"bengkokan; dipakai asumsi sengkang persegi 2 kaki "
+                 f"{asumsi.get(90, 0)}×90° + {asumsi.get(sk.hook_sudut, 0)}×"
+                 f"{sk.hook_sudut}°. Verifikasi ke BBS asli sebelum "
+                 f"mengaktifkan koreksi bengkokan.")
+        if pesan not in cfg.warnings:
+            cfg.warnings.append(pesan)
+        bengkokan = asumsi
     panjang = keliling_sengkang(tpl.b_mm, tpl.h_mm, sk.dia, sk.hook_sudut,
-                                cfg, elemen=tpl.tipe)
+                                cfg, elemen=tpl.tipe, bengkokan=bengkokan)
     c = cfg.cover[tpl.tipe]
     lebar_dalam = tpl.b_mm - 2 * c
     tinggi_dalam = tpl.h_mm - 2 * c

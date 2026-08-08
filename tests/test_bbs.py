@@ -17,9 +17,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 import dataclasses
-from bbs import (agregasi, generate_bbs, generate_elemen, generate_sengkang,
-                 generate_tulangan_utama, hitung_jumlah_sengkang,
-                 keliling_sengkang, koreksi_bengkokan)
+from bbs import (agregasi, bend_deduction, generate_bbs, generate_elemen,
+                 generate_sengkang, generate_tulangan_utama,
+                 hitung_jumlah_sengkang, keliling_sengkang)
 from config_loader import load_all
 from models import (ConfigError, Cut, ElemenInput, LengthExceedsStockError,
                     ProjectConfig, TemplateSengkang)
@@ -174,13 +174,16 @@ def test_bar_mark_web_cli_konsisten(cfg, templates):
     assert "GS-02/B1-A1" in marks
     assert len(marks) == 4  # A1, B2, P3, SK
 def test_koreksi_bengkokan_default_off(cfg):
-    assert koreksi_bengkokan(10, cfg) == 0
+    assert bend_deduction(10, {90: 3, 135: 2}, cfg) == 0
 
 
-def test_koreksi_bengkokan_aktif_fail_loud(cfg):
+def test_koreksi_bengkokan_aktif_menghitung(cfg):
+    # PATCH-06: aktif → bend deduction dihitung dari bend_deduction_faktor
+    # config (bukan fail loud). D10: 3×2d + 2×3d = 120 mm.
     c2 = dataclasses.replace(cfg, koreksi_bend_aktif=True)
-    with pytest.raises(ConfigError):
-        koreksi_bengkokan(10, c2)
+    assert bend_deduction(10, {90: 3, 135: 2}, c2) == 120
+    assert keliling_sengkang(300, 600, 10, 135, c2, elemen="balok",
+                             bengkokan={90: 3, 135: 2}) == 1520
 
 
 # ── input Excel ─────────────────────────────────────────────

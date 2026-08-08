@@ -417,7 +417,12 @@ function renderParam(cfg, overrideAktif) {
     `zona tumpuan ${cfg.zona_tumpuan_faktor}${flag('zona_tumpuan_faktor')} | ` +
     `sengkang pertama ${cfg.jarak_sengkang_pertama_mm} mm | ` +
     `metode ${cfg.metode_hitung}${flag('metode_hitung')}\n` +
-    `koreksi bengkokan: ${cfg.koreksi_bend_aktif ? 'AKTIF' : 'nonaktif'}`;
+    `koreksi bengkokan: ${cfg.koreksi_bend_aktif ? 'AKTIF' : 'nonaktif'}` +
+    (cfg.koreksi_bend_aktif
+      ? ' ⚠ Pastikan `hook tail` dan `bend deduction` memakai konvensi yang ' +
+        'sama (A: hook total termasuk lengkung vs B: ekor lurus saja). ' +
+        'Verifikasi ke BBS asli sebelum memakai hasil (F4).'
+      : '');
   $('paramActions').style.display = proyekAktif ? '' : 'none';
   $('paramForm').style.display = 'none';
   $('paramBody').style.display = '';
@@ -470,7 +475,12 @@ function renderPanelView(cfg) {
     `Ld: ${ldTxt}\n` +
     `hook tail: ${hookTxt}\n` +
     `sengkang: ${skTxt}\n` +
-    `koreksi bengkokan: ${cfg.koreksi_bend_aktif ? 'AKTIF' : 'nonaktif'}\n` +
+    `koreksi bengkokan: ${cfg.koreksi_bend_aktif ? 'AKTIF' : 'nonaktif'}` +
+    (cfg.koreksi_bend_aktif
+      ? ' ⚠ Pastikan `hook tail` dan `bend deduction` memakai konvensi yang ' +
+        'sama (A: hook total termasuk lengkung vs B: ekor lurus saja). ' +
+        'Verifikasi ke BBS asli sebelum memakai hasil (F4).'
+      : '') + '\n' +
     `<span style="color:#b45309;font-size:10.5px">[dari gambar ini] = nilai khusus gambar; sisanya ikut proyek</span>`;
 }
 

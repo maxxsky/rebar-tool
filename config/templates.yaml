@@ -24,6 +24,9 @@ balok:
       jarak_lapangan_mm: 200
       kaki: 2                        # 2 kaki = sengkang tunggal persegi
       hook_sudut: 135
+      # PATCH-06 §1.6: jumlah bengkokan per sudut (opsional; default
+      # sengkang persegi 2 kaki = 3×90° + 2×135° — asumsi dicatat di output)
+      bengkokan: {90: 3, 135: 2}
 
   B2:
     deskripsi: "Balok anak 250x500"
@@ -38,3 +41,4 @@ balok:
       jarak_lapangan_mm: 150
       kaki: 2
       hook_sudut: 135
+      bengkokan: {90: 3, 135: 2}

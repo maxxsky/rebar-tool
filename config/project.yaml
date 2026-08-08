@@ -57,6 +57,15 @@ hook:
   diameter_bengkok_faktor: 4
   # koreksi bengkokan — OFF sampai terverifikasi ke BBS asli (F4, spec 02 §3.1)
   koreksi_bengkokan_aktif: false
+  # PATCH-06 §1.5 — bend deduction per bengkokan sebagai kelipatan diameter.
+  # PLACEHOLDER — owner konfirmasi ke BBS asli/praktik proyek sebelum dipakai.
+  # Konvensi hook (A: hook total termasuk lengkung vs B: ekor lurus saja)
+  # harus konsisten dengan tail_* di atas. Default false → tidak terpakai.
+  bend_deduction_faktor:
+    45: 1
+    90: 2
+    135: 3
+    180: 4
 
 # ── Unit weight (kg/m) ────────────────────────────────────
 # Konstanta fisik, boleh default tapi tetap override-able

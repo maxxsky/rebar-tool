@@ -65,6 +65,7 @@ class ProjectConfig:
     lap: dict                        # dia -> mm
     hook_tail: dict                  # sudut -> dia -> mm
     bend_factor: int
+    bend_faktor: dict                # sudut -> kelipatan diameter (PATCH-06 §1.5)
     unit_weight: dict                # dia -> kg/m
     sengkang_cfg: SengkangConfig
     optimizer: OptimizerConfig
@@ -87,6 +88,10 @@ class TemplateSengkang:
     jarak_lapangan_mm: int
     kaki: int
     hook_sudut: int
+    # PATCH-06 §1.6: jumlah bengkokan per sudut (mis. {90: 3, 135: 2} utk
+    # sengkang persegi 2 kaki). Kosong → turunkan dari bentuk standar
+    # (3× sudut 90° + 2× hook_sudut) + catat asumsi di output.
+    bengkokan: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

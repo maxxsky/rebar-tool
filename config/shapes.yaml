@@ -1,0 +1,26 @@
+# Bentuk tulangan bawaan — 10-SPEC. Reproduksi perilaku asli:
+# "01" batang lurus, "51" sengkang persegi 2 kaki.
+_meta:
+  dibuat_via: migrasi
+  catatan: "Bawaan 10-SPEC — bisa diubah per proyek"
+"01":
+  nama: "Batang lurus"
+  deskripsi: "Tanpa bengkokan"
+  segmen:
+    - { id: A, panjang: "L" }
+  bengkokan: []
+  hook: []
+
+"51":
+  nama: "Sengkang persegi 2 kaki"
+  deskripsi: "Sengkang tertutup dengan hook di satu sudut"
+  segmen:
+    - { id: A, panjang: "b - 2*c" }
+    - { id: B, panjang: "h - 2*c" }
+    - { id: C, panjang: "b - 2*c" }
+    - { id: D, panjang: "h - 2*c" }
+  bengkokan:
+    - { sudut: 90, jumlah: 3 }
+    - { sudut: hook, jumlah: 2 }
+  hook:
+    - { sudut: hook, jumlah: 2 }

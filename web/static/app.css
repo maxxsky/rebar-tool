@@ -204,7 +204,7 @@ tr.total td { font-weight: 700; border-top: 2px solid var(--garis); }
 .tpl-block { border: 1px solid var(--garis); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
 .tpl-block .del { float: right; border: none; background: none; color: var(--karat);
                   font-size: 15px; cursor: pointer; }
-.tul-row { display: grid; grid-template-columns: 1fr 60px 50px 90px 30px; gap: 5px;
+.tul-row { display: grid; grid-template-columns: 1fr 60px 50px 90px 90px 30px; gap: 5px;
            margin-bottom: 5px; align-items: center; }
 .tul-row input, .tul-row select { padding: 5px 6px; font-size: 12px;
            border: 1px solid var(--garis); border-radius: 5px; width: 100%; }

@@ -292,9 +292,19 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
             jumlah = _norm_int(t.get("jumlah"), "jumlah", path)
         except ConfigError as e:
             raise ConfigError(str(e))
+        # 10-SPEC §5: shape + vars — default "01" batang lurus.
+        # Migrasi §6: template lama (tanpa vars) mereproduksi perilaku asli
+        # tulangan utama = bentang + n_ujung×Ld (tumpuan_kedua_ujung).
+        shape = str(t.get("shape", "01"))
+        vars_ = t.get("vars")
+        if vars_ is None:
+            n_ujung = 2 if t.get("tumpuan_kedua_ujung", True) else 1
+            vars_ = {"L": f"L + {n_ujung}*Ld"}
+        vars_ = dict(vars_)
         tulangan.append(TemplateTulangan(
             posisi=posisi, dia=dia, jumlah=jumlah,
-            tumpuan_kedua_ujung=bool(t.get("tumpuan_kedua_ujung", True))))
+            tumpuan_kedua_ujung=bool(t.get("tumpuan_kedua_ujung", True)),
+            shape=shape, vars=vars_))
 
     sk = tpl.get("sengkang")
     if sk is None:
@@ -312,7 +322,8 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
     if sk_hook not in ALLOWED_SENGKANG_HOOK:
         raise ConfigError(f"{sk_path}.hook_sudut: hanya 90 atau 135, dapat {sk_hook}")
 
-    # PATCH-06 §1.6: jumlah bengkokan per sudut — opsional.
+    # PATCH-06 §1.6: jumlah bengkokan per sudut — opsional (legacy; 10-SPEC
+    # menurunkan dari shape "51" — field ini dipertahankan utk kompatibilitas).
     bengkokan = {}
     bk_raw = sk.get("bengkokan") or {}
     if bk_raw:
@@ -325,12 +336,16 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
             except ConfigError as e:
                 raise ConfigError(str(e))
 
+    # 10-SPEC §5: shape sengkang — default "51" sengkang persegi 2 kaki
+    shape = str(sk.get("shape", "51"))
+
     return ElementTemplate(
         nama=nama, tipe=tipe, deskripsi=deskripsi, b_mm=b, h_mm=h,
         tulangan=tuple(tulangan),
         sengkang=TemplateSengkang(dia=sk_dia, jarak_tumpuan_mm=sk_tt,
                                   jarak_lapangan_mm=sk_tl, kaki=sk_kaki,
-                                  hook_sudut=sk_hook, bengkokan=bengkokan))
+                                  hook_sudut=sk_hook, bengkokan=bengkokan,
+                                  shape=shape))
 
 
 # ── validasi silang config ↔ template (spec §5.1) ───────────
@@ -366,6 +381,35 @@ def validate_config_templates(cfg: ProjectConfig,
                       f"template '{nama}.sengkang'", errors,
                       tpl.sengkang.hook_sudut)
 
+        # 10-SPEC §8: shape dipakai template tapi tidak ada di shapes.yaml.
+        # Skip kalau cfg.shapes kosong — pemanggil langsung (test lama, jalur
+        # legacy) tidak load shapes; load_all/load_layered selalu mengisinya.
+        if cfg.shapes:
+            for i, t in enumerate(tpl.tulangan):
+                if t.shape not in cfg.shapes:
+                    errors.append(
+                        f"  Shape '{t.shape}' dipakai di template '{nama}."
+                        f"tulangan[{i}]'\n"
+                        f"  tapi tidak ada di shapes.yaml. "
+                        f"Shape yang ada: {', '.join(sorted(cfg.shapes))}")
+            if tpl.sengkang.shape not in cfg.shapes:
+                errors.append(
+                    f"  Shape '{tpl.sengkang.shape}' dipakai di template "
+                    f"'{nama}.sengkang'\n"
+                    f"  tapi tidak ada di shapes.yaml. "
+                    f"Shape yang ada: {', '.join(sorted(cfg.shapes))}")
+            # §8: jumlah bengkokan > jumlah segmen + 1 → warning (biasanya
+            # salah hitung). Sengkang persegi 4 segmen punya 5 bengkokan
+            # (3×90 antar sisi + 2×hook) — itu normal, bukan salah.
+            sh = cfg.shapes.get(tpl.sengkang.shape)
+            if sh and sh.segmen:
+                n_b = sum(b.jumlah for b in sh.bengkokan)
+                if n_b > len(sh.segmen) + 1:
+                    cfg.warnings.append(
+                        f"WARNING: shape '{tpl.sengkang.shape}' dipakai template "
+                        f"'{nama}': {n_b} bengkokan > {len(sh.segmen)} segmen — "
+                        f"biasanya salah hitung.")
+
 
 def _cek_diameter(cfg, dia, path, errors, hook_sudut=None):
     if dia not in cfg.ld:
@@ -390,9 +434,18 @@ def load_all(config_dir) -> tuple[ProjectConfig, dict[str, ElementTemplate]]:
 
     Raises ConfigError dengan daftar LENGKAP error kalau ada yang gagal.
     """
+    import dataclasses
+    from shapes import load_shapes, tulis_shapes_bawaan
+
     config_dir = Path(config_dir)
     cfg = load_project_config(config_dir / "project.yaml")
     templates = load_templates(config_dir / "templates.yaml")
+
+    # 10-SPEC §6: shapes.yaml bawaan kalau belum ada — SEBELUM validasi
+    # (validasi silang template↔shape butuh daftar shape).
+    shapes_p = tulis_shapes_bawaan(config_dir / "shapes.yaml")
+    shapes = load_shapes(shapes_p)
+    cfg = dataclasses.replace(cfg, shapes=shapes)
 
     errors: list[str] = []
     validate_config_templates(cfg, templates, errors)
@@ -532,6 +585,14 @@ def load_layered(projects_dir, proyek, gambar):
         raise ConfigError(f"Proyek '{proyek}' tidak lengkap (project.yaml/templates.yaml).")
     cfg = load_project_config(proj_f)
     templates = load_templates(tpl_f)
+
+    # 10-SPEC §6: shapes.yaml per proyek — bawaan kalau belum ada (SEBELUM
+    # validasi — validasi silang template↔shape butuh daftar shape).
+    import dataclasses
+    from shapes import load_shapes, tulis_shapes_bawaan
+    shapes_p = tulis_shapes_bawaan(base / "shapes.yaml")
+    shapes = load_shapes(shapes_p)
+    cfg = dataclasses.replace(cfg, shapes=shapes)
 
     drawing = load_drawing(projects_dir, proyek, gambar)
     cfg_res = resolve_config(cfg, drawing.get("override"))

@@ -71,7 +71,40 @@ class ProjectConfig:
     optimizer: OptimizerConfig
     koreksi_bend_aktif: bool = False  # spec 02 §3.1 — default OFF sampai terverifikasi (F4)
     hook_konvensi: str = "tail_terpisah"  # 09-SPEC §8: "tail_terpisah" | "hook_total"
+    shapes: dict = field(default_factory=dict)  # 10-SPEC: {kode: ShapeDef}
     warnings: list = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ShapeSegmen:
+    id: str
+    panjang: str          # ekspresi — dievaluasi via parser whitelist (10-SPEC §3)
+
+
+@dataclass(frozen=True)
+class ShapeBengkokan:
+    sudut: object         # int | "hook"
+    jumlah: int
+
+
+@dataclass(frozen=True)
+class ShapeHook:
+    sudut: object         # int | "hook"
+    jumlah: int
+
+
+@dataclass(frozen=True)
+class ShapeDef:
+    """Definisi bentuk tulangan — config/shapes.yaml (10-SPEC §3).
+
+    Rumus universal: panjang_potong = Σ segmen + Σ hook − Σ bend deduction.
+    """
+    kode: str
+    nama: str
+    deskripsi: str
+    segmen: tuple[ShapeSegmen, ...]
+    bengkokan: tuple[ShapeBengkokan, ...]
+    hook: tuple[ShapeHook, ...]
 
 
 @dataclass(frozen=True)
@@ -80,6 +113,8 @@ class TemplateTulangan:
     dia: int
     jumlah: int
     tumpuan_kedua_ujung: bool = True
+    shape: str = "01"     # 10-SPEC §5 — default batang lurus
+    vars: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -91,8 +126,9 @@ class TemplateSengkang:
     hook_sudut: int
     # PATCH-06 §1.6: jumlah bengkokan per sudut (mis. {90: 3, 135: 2} utk
     # sengkang persegi 2 kaki). Kosong → turunkan dari bentuk standar
-    # (3× sudut 90° + 2× hook_sudut) + catat asumsi di output.
+    # (3× sudut 90° + 2× hook_sudut) — asumsi dicatat di output.
     bengkokan: dict = field(default_factory=dict)
+    shape: str = "51"     # 10-SPEC §5 — default sengkang persegi 2 kaki
 
 
 @dataclass(frozen=True)

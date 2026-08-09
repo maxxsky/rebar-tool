@@ -208,14 +208,16 @@ def _templates_dict(templates):
             "h_mm": t.h_mm,
             "tulangan": [{"posisi": x.posisi, "dia": x.dia,
                           "jumlah": x.jumlah,
-                          "tumpuan_kedua_ujung": x.tumpuan_kedua_ujung}
+                          "tumpuan_kedua_ujung": x.tumpuan_kedua_ujung,
+                          "shape": x.shape, "vars": dict(x.vars)}
                          for x in t.tulangan],
             "sengkang": {"dia": t.sengkang.dia,
                          "jarak_tumpuan_mm": t.sengkang.jarak_tumpuan_mm,
                          "jarak_lapangan_mm": t.sengkang.jarak_lapangan_mm,
                          "kaki": t.sengkang.kaki,
                          "hook_sudut": t.sengkang.hook_sudut,
-                         "bengkokan": dict(t.sengkang.bengkokan)},
+                         "bengkokan": dict(t.sengkang.bengkokan),
+                         "shape": t.sengkang.shape},
         }
     return out
 
@@ -622,6 +624,56 @@ def _asal_nilai(proj_cfg_d, override_d):
 def api_drawings(proyek):
     return jsonify({"ok": True, "proyek": proyek,
                     "drawings": list_drawings(CONFIG_DIR / "projects", proyek)})
+
+
+@app.get("/api/projects/<proyek>/shapes")
+def api_shapes_get(proyek):
+    """Baca shapes.yaml proyek (10-SPEC) — format mentah untuk editor UI."""
+    import yaml
+    p = CONFIG_DIR / "projects" / proyek / "shapes.yaml"
+    if not p.exists():
+        return jsonify({"ok": False,
+                        "error": f"Proyek '{proyek}' belum punya shapes.yaml."}), 404
+    d = yaml.safe_load(p.read_text()) or {}
+    d.pop("_meta", None)
+    return jsonify({"ok": True, "shapes": d})
+
+
+@app.put("/api/projects/<proyek>/shapes")
+@tulis_local_only
+def api_shapes_put(proyek):
+    """Simpan shapes.yaml proyek — validasi via load_shapes (satu sumber)."""
+    import shutil
+    from datetime import datetime
+    import yaml
+    from shapes import load_shapes
+    data = request.get_json(force=True) or {}
+    shapes_d = data.get("shapes")
+    if not isinstance(shapes_d, dict) or not shapes_d:
+        return jsonify({"ok": False, "error": "shapes wajib mapping non-kosong."}), 400
+    pdir = CONFIG_DIR / "projects" / proyek
+    p = pdir / "shapes.yaml"
+    if not p.exists():
+        return jsonify({"ok": False,
+                        "error": f"Proyek '{proyek}' belum punya shapes.yaml."}), 404
+    # validasi lewat loader — ConfigError → tolak
+    import tempfile
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td) / "shapes.yaml"
+            tp.write_text(yaml.safe_dump(shapes_d, allow_unicode=True))
+            load_shapes(tp)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    # arsip lama
+    arsip = pdir / "_arsip"
+    arsip.mkdir(exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    shutil.copy2(p, arsip / f"shapes_{ts}.yaml")
+    meta = (f"_meta:\n  diubah_via: web\n  diubah_pada: "
+            f"{datetime.now().astimezone().replace(microsecond=0).isoformat()}\n")
+    p.write_text(meta + yaml.safe_dump(shapes_d, allow_unicode=True))
+    return jsonify({"ok": True, "kode": proyek})
 
 
 @app.get("/api/projects/<proyek>/drawings/<gambar>")

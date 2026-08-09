@@ -1,0 +1,31 @@
+_meta:
+  diubah_via: web
+  diubah_pada: 2026-08-09T15:47:46+08:00
+'01':
+  bengkokan: []
+  deskripsi: Tanpa bengkokan
+  hook: []
+  nama: Batang lurus
+  segmen:
+  - id: A
+    panjang: L
+'51':
+  bengkokan:
+  - jumlah: 3
+    sudut: 90
+  - jumlah: 2
+    sudut: hook
+  deskripsi: Sengkang tertutup dengan hook di satu sudut
+  hook:
+  - jumlah: 2
+    sudut: hook
+  nama: Sengkang persegi 2 kaki
+  segmen:
+  - id: A
+    panjang: b - 2*c
+  - id: B
+    panjang: h - 2*c
+  - id: C
+    panjang: b - 2*c
+  - id: D
+    panjang: h - 2*c

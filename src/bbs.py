@@ -56,24 +56,112 @@ def _bengkokan_default(hook_sudut: int) -> dict:
     return {90: 3, hook_sudut: 2}
 
 
+# ── panjang potong universal (10-SPEC §4) ──────────────────
+def panjang_potong(shape, vars_, dia, hook_sudut, cfg, elemen="balok",
+                   bentang=None) -> tuple[int, tuple[int, ...]]:
+    """Panjang potong dari definisi shape — rumus universal.
+
+    Σ segmen + Σ hook − Σ bend deduction.
+    Menggantikan jalur terpisah untuk tulangan lurus & sengkang.
+
+    shape: ShapeDef (dari cfg.shapes). vars_: nilai dari template.vars.
+    hook_sudut: int | None — untuk bengkokan/hook 'hook' (ikut template).
+    """
+    from shapes import evaluasi_ekspresi
+
+    # variabel dasar (10-SPEC §3.1) — L = bentang dari input
+    v = {
+        "b": vars_.get("b_mm", 0),
+        "h": vars_.get("h_mm", 0),
+        "c": cfg.cover.get(elemen, 0),
+        "d": dia,
+        "Ld": cfg.ld.get(dia, 0),
+        "L": bentang if bentang is not None else 0,
+    }
+    # vars_ dari template: angka langsung, atau ekspresi yang di-resolve
+    # terhadap variabel dasar (mis. {"L": "L + 2*Ld"} — migrasi §6).
+    for k, x in vars_.items():
+        if k in ("b_mm", "h_mm"):
+            continue
+        if isinstance(x, (int, float)):
+            v[k] = float(x)
+        elif isinstance(x, str):
+            v[k] = evaluasi_ekspresi(x, v, f"shape.{shape.kode}.vars.{k}")
+
+    segmen = []
+    for s in shape.segmen:
+        val = evaluasi_ekspresi(s.panjang, v, f"shape.{shape.kode}.{s.id}")
+        segmen.append(int(round(val)))
+
+    hook = 0
+    for hk in shape.hook:
+        sudut = hook_sudut if hk.sudut == "hook" else hk.sudut
+        if sudut not in cfg.hook_tail:
+            raise ConfigError(
+                f"Shape '{shape.kode}' pakai hook {sudut}°, "
+                f"tapi hook_tail untuk sudut itu tidak ada di config.")
+        if dia not in cfg.hook_tail[sudut]:
+            raise ConfigError(
+                f"Shape '{shape.kode}': hook_tail {sudut}° untuk D{dia} "
+                f"tidak ada di config.")
+        hook += hk.jumlah * cfg.hook_tail[sudut][dia]
+
+    bengkokan = {}
+    for bd in shape.bengkokan:
+        sudut = hook_sudut if bd.sudut == "hook" else bd.sudut
+        bengkokan[sudut] = bengkokan.get(sudut, 0) + bd.jumlah
+
+    bend = bend_deduction(dia, bengkokan, cfg)
+    if cfg.hook_konvensi == "hook_total":
+        bend = 0
+
+    panjang = sum(segmen) + hook - bend
+    if panjang <= 0:
+        raise ValueError(
+            f"Shape '{shape.kode}' menghasilkan panjang {panjang} mm. "
+            f"Cek dimensi elemen dan faktor bend deduction.")
+    return panjang, tuple(segmen)
+
+
+def _get_shape(cfg, kode, pemakai):
+    """Shape dari cfg.shapes; fallback bawaan kalau cfg.shapes kosong
+    (jalur legacy — test lama & load_project_config langsung)."""
+    shape = (cfg.shapes or {}).get(kode)
+    if shape is None and not cfg.shapes:
+        from shapes import shapes_bawaan
+        shape = shapes_bawaan().get(kode)
+    if shape is None:
+        raise ConfigError(
+            f"Shape '{kode}' dipakai {pemakai} tapi tidak ada di shapes.yaml.")
+    return shape
+
+
 # ── tulangan utama ──────────────────────────────────────────
 def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectConfig,
                             meta) -> Cut:
-    """Tulangan lurus dengan penyaluran di ujung."""
-    ld = cfg.ld[tul.dia]          # fail loud sudah dijamin F0 (validasi config)
-    n_ujung = 2 if tul.tumpuan_kedua_ujung else 1
-    L = bentang + n_ujung * ld
+    """Tulangan dengan shape dari template (default '01' batang lurus)."""
+    shape_kode = getattr(tul, 'shape', None) or '01'
+    shape = _get_shape(cfg, shape_kode, f"template '{meta.tipe_elemen}'")
+    # vars dari template; jalur legacy (SimpleNamespace tanpa vars) →
+    # reproduksi perilaku lama: L = bentang + n_ujung×Ld
+    vars_ = getattr(tul, 'vars', None)
+    if not vars_:
+        n_ujung = 2 if getattr(tul, 'tumpuan_kedua_ujung', True) else 1
+        vars_ = {"L": f"L + {n_ujung}*Ld"}
+    vars_ = {**vars_, "b_mm": meta.b_mm, "h_mm": meta.h_mm}
+    panjang, segmen = panjang_potong(shape, vars_, tul.dia, None, cfg,
+                                     elemen=meta.tipe_elemen, bentang=bentang)
 
-    if L > cfg.stok.panjang_batang_mm:
+    if panjang > cfg.stok.panjang_batang_mm:
         raise LengthExceedsStockError(
-            f"{meta.bar_mark}: panjang potong {L} mm melebihi batang stok "
+            f"{meta.bar_mark}: panjang potong {panjang} mm melebihi batang stok "
             f"{cfg.stok.panjang_batang_mm} mm. Lap splice belum diimplementasi (F6).")
 
     return Cut(
-        dia=tul.dia, panjang_mm=L, jumlah=tul.jumlah * meta.jumlah_elemen,
+        dia=tul.dia, panjang_mm=panjang, jumlah=tul.jumlah * meta.jumlah_elemen,
         bar_mark=meta.bar_mark, tipe_elemen=meta.tipe_elemen,
-        posisi=meta.posisi, shape_code=SHAPE_LURUS,
-        lokasi=meta.lokasi, segmen_mm=(L,))
+        posisi=meta.posisi, shape_code=shape_kode,
+        lokasi=meta.lokasi, segmen_mm=segmen)
 
 
 # ── sengkang ────────────────────────────────────────────────
@@ -143,20 +231,11 @@ def hitung_jumlah_sengkang(bentang: int, sk: TemplateSengkang,
 def generate_sengkang(tpl: ElementTemplate, bentang: int, cfg: ProjectConfig,
                       meta) -> Cut:
     sk = tpl.sengkang
-    bengkokan = dict(sk.bengkokan) if sk.bengkokan else None
-    if bengkokan is None and cfg.koreksi_bend_aktif:
-        # asumsi bentuk standar dipakai — catat, jangan diam-diam (PATCH-06 §1.6)
-        asumsi = _bengkokan_default(sk.hook_sudut)
-        pesan = (f"WARNING: template '{tpl.nama}' sengkang tidak menyebut "
-                 f"bengkokan; dipakai asumsi sengkang persegi 2 kaki "
-                 f"{asumsi.get(90, 0)}×90° + {asumsi.get(sk.hook_sudut, 0)}×"
-                 f"{sk.hook_sudut}°. Verifikasi ke BBS asli sebelum "
-                 f"mengaktifkan koreksi bengkokan.")
-        if pesan not in cfg.warnings:
-            cfg.warnings.append(pesan)
-        bengkokan = asumsi
-    panjang = keliling_sengkang(tpl.b_mm, tpl.h_mm, sk.dia, sk.hook_sudut,
-                                cfg, elemen=tpl.tipe, bengkokan=bengkokan)
+    # 10-SPEC: sengkang pakai shape dari template (default '51')
+    shape = _get_shape(cfg, sk.shape, f"template '{tpl.nama}' sengkang")
+    vars_ = {"b_mm": tpl.b_mm, "h_mm": tpl.h_mm}
+    panjang, segmen = panjang_potong(shape, vars_, sk.dia, sk.hook_sudut,
+                                     cfg, elemen=tpl.tipe, bentang=bentang)
     c = cfg.cover[tpl.tipe]
     lebar_dalam = tpl.b_mm - 2 * c
     tinggi_dalam = tpl.h_mm - 2 * c
@@ -164,9 +243,9 @@ def generate_sengkang(tpl: ElementTemplate, bentang: int, cfg: ProjectConfig,
     return Cut(
         dia=sk.dia, panjang_mm=panjang, jumlah=n * meta.jumlah_elemen,
         bar_mark=meta.bar_mark, tipe_elemen=meta.tipe_elemen,
-        posisi="sengkang", shape_code=SHAPE_SENGKANG,
-        lokasi=meta.lokasi, segmen_mm=(lebar_dalam, tinggi_dalam,
-                                       lebar_dalam, tinggi_dalam))
+        posisi="sengkang", shape_code=sk.shape,
+        lokasi=meta.lokasi, segmen_mm=tuple(segmen) if segmen else
+        (lebar_dalam, tinggi_dalam, lebar_dalam, tinggi_dalam))
 
 
 # ── generate satu elemen ────────────────────────────────────
@@ -184,25 +263,30 @@ def generate_elemen(tpl: ElementTemplate, elemen: ElemenInput,
     for i, tul in enumerate(tpl.tulangan):
         bar_mark = f"{prefix}{tpl.nama}-{tul.posisi[0].upper()}{i + 1}"
         meta = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
-                     lokasi=lokasi, bar_mark=bar_mark, posisi=tul.posisi)
+                     lokasi=lokasi, bar_mark=bar_mark, posisi=tul.posisi,
+                     b_mm=tpl.b_mm, h_mm=tpl.h_mm)
         out.append(generate_tulangan_utama(tul, bentang, cfg, meta))
 
     meta_sk = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
                     lokasi=lokasi, bar_mark=f"{prefix}{tpl.nama}-SK",
-                    posisi="sengkang")
+                    posisi="sengkang", b_mm=tpl.b_mm, h_mm=tpl.h_mm)
     out.append(generate_sengkang(tpl, bentang, cfg, meta_sk))
     return out
 
 
 class _Meta:
-    __slots__ = ("tipe_elemen", "jumlah_elemen", "lokasi", "bar_mark", "posisi")
+    __slots__ = ("tipe_elemen", "jumlah_elemen", "lokasi", "bar_mark",
+                 "posisi", "b_mm", "h_mm")
 
-    def __init__(self, tipe_elemen, jumlah_elemen, lokasi, bar_mark, posisi):
+    def __init__(self, tipe_elemen, jumlah_elemen, lokasi, bar_mark, posisi,
+                 b_mm=0, h_mm=0):
         self.tipe_elemen = tipe_elemen
         self.jumlah_elemen = jumlah_elemen
         self.lokasi = lokasi
         self.bar_mark = bar_mark
         self.posisi = posisi
+        self.b_mm = b_mm
+        self.h_mm = h_mm
 
 
 # ── generate semua elemen + agregasi ────────────────────────

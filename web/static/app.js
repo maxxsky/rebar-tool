@@ -729,6 +729,17 @@ function updateSetupNav() {
   const cg = $('cntGambar'), ce = $('cntElemen');
   if (cg) { cg.textContent = gCount > 0 ? gCount : '⚠'; cg.className = 'cnt' + (gCount ? '' : ' warn'); }
   if (ce) { ce.textContent = tplCount > 0 ? tplCount : '⚠'; ce.className = 'cnt' + (tplCount ? '' : ' warn'); }
+  // counter Bentuk diisi saat halaman dibuka (renderSetupBentuk) — inisialisasi
+  if (proyekAktif && proyekBerlapis && $('cntBentuk')) {
+    (async () => {
+      try {
+        const d = await (await fetch(`/api/projects/${proyekAktif}/shapes`)).json();
+        const n = d.ok ? Object.keys(d.shapes || {}).length : 0;
+        const cb = $('cntBentuk');
+        if (cb) { cb.textContent = n > 0 ? n : '⚠'; cb.className = 'cnt' + (n ? '' : ' warn'); }
+      } catch (_e) { /* biarkan kosong */ }
+    })();
+  }
   const btn = $('btnHitung');
   if (btn) {
     if (!proyekAktif) {
@@ -806,6 +817,7 @@ function renderSetupPage(page) {
   if (page === 'gambar') return renderSetupGambar(body);
   if (page === 'teknis') return renderSetupTeknis(body);
   if (page === 'elemen') return renderSetupElemen(body);
+  if (page === 'bentuk') return renderSetupBentuk(body);
 }
 
 function renderSetupProyek(body) {
@@ -963,6 +975,262 @@ function renderElemSummary() {
     (extra > 0 ? `<div class="wiz-hint">dan ${extra} lainnya</div>` : '');
 }
 
+// ── Setup › Bentuk (10-SPEC §7) — daftar & editor shape ──
+let shapeDraft = null;      // {kode, nama, deskripsi, segmen[], bengkokan[], hook[]}
+let shapePreviewTpl = '';   // template elemen dipilih untuk pratinjau
+
+function renderSetupBentuk(body) {
+  if (!proyekAktif || !proyekBerlapis) {
+    body.innerHTML = `<h2>Bentuk</h2><div class="kosong">
+      Pilih proyek berlapis dulu di kanan atas.</div>`;
+    return;
+  }
+  (async () => {
+    const d = await (await fetch(`/api/projects/${proyekAktif}/shapes`)).json();
+    if (!d.ok) { body.innerHTML = `<h2>Bentuk</h2><div class="kosong">${escapeHtml(d.error || 'Gagal load')}</div>`; return; }
+    const sh = d.shapes || {};
+    const keys = Object.keys(sh).sort();
+    const cg = $('cntBentuk');
+    if (cg) { cg.textContent = keys.length; cg.className = 'cnt'; }
+    body.innerHTML = `
+      <h2>Bentuk tulangan</h2>
+      <div class="sub">Definisi bentuk — menambah bentuk baru = mengisi form, bukan menulis kode.</div>
+      ${keys.map(k => {
+        const s = sh[k];
+        const nSeg = (s.segmen || []).length;
+        const nBeng = (s.bengkokan || []).reduce((a, b) => a + (b.jumlah || 0), 0);
+        return `<div class="daftar-item"><div class="info">
+          <b>${esc(k)}</b> · ${esc(s.nama || '')}<br>
+          <small>${nSeg} segmen · ${nBeng} bengkokan</small>
+        </div>
+        <div class="aksi">
+          <button class="btn kecil" onclick="bukaEditorBentuk('${esc(k)}')">edit</button>
+        </div></div>`;
+      }).join('')}
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="btn" onclick="bukaEditorBentuk('')">+ Bentuk baru</button>
+        <button class="btn" onclick="bukaEditorBentuk('', true)">+ Salin dari bentuk ada</button>
+      </div>`;
+  })();
+}
+
+async function bukaEditorBentuk(kode, salin = false) {
+  if (kode && !salin) {
+    const d = await (await fetch(`/api/projects/${proyekAktif}/shapes`)).json();
+    const s = (d.shapes || {})[kode];
+    if (!s) { alert('Shape tidak ada.'); return; }
+    shapeDraft = { kode, nama: s.nama || '', deskripsi: s.deskripsi || '',
+                   segmen: (s.segmen || []).map(x => ({...x})),
+                   bengkokan: (s.bengkokan || []).map(x => ({...x})),
+                   hook: (s.hook || []).map(x => ({...x})) };
+  } else if (salin) {
+    const d = await (await fetch(`/api/projects/${proyekAktif}/shapes`)).json();
+    const keys = Object.keys(d.shapes || {}).sort();
+    const pilih = prompt(`Salin dari shape yang mana? (${keys.join(', ')})`, keys[0] || '');
+    if (!pilih || !d.shapes[pilih]) { alert('Shape sumber tidak ada.'); return; }
+    const s = d.shapes[pilih];
+    const baru = prompt('Kode shape baru:', `${pilih}-x`);
+    if (!baru) return;
+    shapeDraft = { kode: baru, nama: s.nama || '', deskripsi: s.deskripsi || '',
+                   segmen: (s.segmen || []).map(x => ({...x})),
+                   bengkokan: (s.bengkokan || []).map(x => ({...x})),
+                   hook: (s.hook || []).map(x => ({...x})) };
+  } else {
+    shapeDraft = { kode: '', nama: '', deskripsi: '', segmen: [],
+                   bengkokan: [], hook: [] };
+  }
+  // pilih template pratinjau pertama yang ada
+  const tpls = (proyekRaw && proyekRaw.templates && (proyekRaw.templates.balok || proyekRaw.templates)) || {};
+  shapePreviewTpl = Object.keys(tpls)[0] || '';
+  renderShapeEditor();
+}
+
+function renderShapeEditor() {
+  const body = $('setupPage');
+  const d = shapeDraft;
+  const tpls = (proyekRaw && proyekRaw.templates && (proyekRaw.templates.balok || proyekRaw.templates)) || {};
+  body.innerHTML = `
+    <h2>Editor bentuk — ${esc(d.kode || '(baru)')}</h2>
+    <div class="sub">Rumus universal: Σ segmen + Σ hook − Σ bend deduction.</div>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Kode *</label>
+        <input id="shKode" value="${esc(d.kode)}" placeholder="21"></div>
+      <div class="wiz-field"><label>Nama</label>
+        <input id="shNama" value="${esc(d.nama)}" placeholder="Batang bengkok satu ujung"></div>
+    </div>
+    <div class="wiz-field"><label>Deskripsi</label>
+      <input id="shDesk" value="${esc(d.deskripsi)}"></div>
+
+    <h3 style="font-size:13px;margin:14px 0 6px">SEGMEN <span class="wiz-hint">(variabel: L b h c Ld d tekuk · operator + − * /)</span></h3>
+    <div id="shSegmen">${d.segmen.map((s, i) => shapeSegmenRow(s, i)).join('')}</div>
+    <button class="btn" onclick="shapeAddSegmen()">+ segmen</button>
+
+    <h3 style="font-size:13px;margin:14px 0 6px">BENGKOKAN</h3>
+    <div id="shBengkokan">${d.bengkokan.map((b, i) => shapeBengkokanRow(b, i)).join('')}</div>
+    <button class="btn" onclick="shapeAddBengkokan()">+ bengkokan</button>
+
+    <h3 style="font-size:13px;margin:14px 0 6px">HOOK</h3>
+    <div id="shHook">${d.hook.map((h, i) => shapeHookRow(h, i)).join('')}</div>
+    <button class="btn" onclick="shapeAddHook()">+ hook</button>
+
+    <div style="margin-top:14px">
+      <label class="wiz-hint">Pratinjau dengan template:</label>
+      <select id="shPreviewTpl" style="margin-left:8px;padding:5px" onchange="shapePreviewTpl=this.value;shapePreview()">
+        ${Object.keys(tpls).map(t => `<option value="${esc(t)}" ${t === shapePreviewTpl ? 'selected' : ''}>${esc(t)}</option>`).join('')}
+      </select>
+    </div>
+    <div id="shPreview" style="margin-top:8px"></div>
+
+    <div class="ovr-actions" style="margin-top:16px">
+      <button class="btn primary" onclick="shapeSave()">Simpan bentuk</button>
+      <button class="btn" onclick="renderSetupPage('bentuk')">Batal</button>
+    </div>`;
+  // isi kode lama saat baru dibuat — autogenerate
+  if (!d.kode) { /* biarkan kosong, user isi */ }
+  shapePreview();
+}
+
+function shapeSegmenRow(s, i) {
+  return `<div class="shape-row" style="display:flex;gap:6px;margin-bottom:5px;align-items:center">
+    <input class="sh-sid" value="${esc(s.id || '')}" style="width:40px;padding:5px" placeholder="A">
+    <input class="sh-spanjang" value="${esc(s.panjang || '')}" style="flex:1;padding:5px" placeholder="b - 2*c" oninput="shapePreview()">
+    <span class="sh-sval mono" style="width:80px;text-align:right;color:var(--tinta2)"></span>
+    <button class="del" onclick="this.closest('.shape-row').remove();shapePreview()">✕</button>
+  </div>`;
+}
+function shapeBengkokanRow(b, i) {
+  return `<div class="shape-row" style="display:flex;gap:6px;margin-bottom:5px;align-items:center">
+    <select class="sh-bsudut" style="padding:5px" onchange="shapePreview()">
+      <option value="90" ${String(b.sudut) === '90' ? 'selected' : ''}>90°</option>
+      <option value="135" ${String(b.sudut) === '135' ? 'selected' : ''}>135°</option>
+      <option value="hook" ${String(b.sudut) === 'hook' ? 'selected' : ''}>hook (ikut template)</option>
+    </select>
+    <label class="wiz-hint">×</label>
+    <input class="sh-bjumlah" type="number" min="1" value="${b.jumlah || 1}" style="width:60px;padding:5px" oninput="shapePreview()">
+    <button class="del" onclick="this.closest('.shape-row').remove();shapePreview()">✕</button>
+  </div>`;
+}
+function shapeHookRow(h, i) {
+  return `<div class="shape-row" style="display:flex;gap:6px;margin-bottom:5px;align-items:center">
+    <select class="sh-hsudut" style="padding:5px" onchange="shapePreview()">
+      <option value="90" ${String(h.sudut) === '90' ? 'selected' : ''}>90°</option>
+      <option value="135" ${String(h.sudut) === '135' ? 'selected' : ''}>135°</option>
+      <option value="hook" ${String(h.sudut) === 'hook' ? 'selected' : ''}>hook (ikut template)</option>
+    </select>
+    <label class="wiz-hint">×</label>
+    <input class="sh-hjumlah" type="number" min="1" value="${h.jumlah || 1}" style="width:60px;padding:5px" oninput="shapePreview()">
+    <button class="del" onclick="this.closest('.shape-row').remove();shapePreview()">✕</button>
+  </div>`;
+}
+function shapeAddSegmen() {
+  const box = $('shSegmen');
+  const div = document.createElement('div');
+  div.innerHTML = shapeSegmenRow({id: String.fromCharCode(65 + box.children.length), panjang: ''}, box.children.length);
+  box.appendChild(div.firstChild);
+  shapePreview();
+}
+function shapeAddBengkokan() {
+  const box = $('shBengkokan');
+  const div = document.createElement('div');
+  div.innerHTML = shapeBengkokanRow({sudut: '90', jumlah: 1}, box.children.length);
+  box.appendChild(div.firstChild);
+  shapePreview();
+}
+function shapeAddHook() {
+  const box = $('shHook');
+  const div = document.createElement('div');
+  div.innerHTML = shapeHookRow({sudut: 'hook', jumlah: 2}, box.children.length);
+  box.appendChild(div.firstChild);
+  shapePreview();
+}
+
+// pratinjau live — evaluasi tiap segmen + rincian tiga baris (10-SPEC §7)
+function shapePreview() {
+  const out = $('shPreview');
+  if (!out) return;
+  const tpl = (proyekRaw && proyekRaw.templates &&
+               (proyekRaw.templates.balok || proyekRaw.templates) || {})[shapePreviewTpl];
+  if (!tpl) { out.innerHTML = '<div class="wiz-hint">Pilih template elemen dulu.</div>'; return; }
+  const cfg = lastResult && lastResult.config ? lastResult.config : null;
+  const c = cfg ? cfg.cover.balok : 40;
+  const ld = cfg ? (cfg.ld['10'] || cfg.ld[10]) : 400;
+  const hook135 = cfg ? (cfg.hook_tail['135'] && cfg.hook_tail['135']['10']) : 80;
+  const hook90 = cfg ? (cfg.hook_tail['90'] && cfg.hook_tail['90']['10']) : 120;
+  const b = tpl.b_mm, h = tpl.h_mm, d = 10;
+  const vars = { L: 6000, b, h, c, Ld: ld, d, tekuk: 200 };
+  let rows = '';
+  let ok = true;
+  document.querySelectorAll('#shSegmen .shape-row').forEach(r => {
+    const expr = r.querySelector('.sh-spanjang').value.trim();
+    const valSpan = r.querySelector('.sh-sval');
+    if (!expr) { valSpan.textContent = ''; return; }
+    try {
+      const val = evalEkspresiAman(expr, vars);
+      valSpan.textContent = `= ${Math.round(val)} mm`;
+      valSpan.style.color = 'var(--tinta2)';
+      rows += `<div>${esc(expr)} = ${Math.round(val)} mm</div>`;
+    } catch (e) {
+      ok = false;
+      valSpan.textContent = '⚠';
+      valSpan.style.color = 'var(--karat)';
+      rows += `<div style="color:var(--karat)">${esc(expr)} — ${escapeHtml(e.message)}</div>`;
+    }
+  });
+  // hook & bengkokan summary
+  const nHook = [...document.querySelectorAll('#shHook .sh-hjumlah')]
+    .reduce((a, x) => a + (parseInt(x.value) || 0), 0);
+  const nBeng = [...document.querySelectorAll('#shBengkokan .sh-bjumlah')]
+    .reduce((a, x) => a + (parseInt(x.value) || 0), 0);
+  out.innerHTML = `
+    <div class="wiz-warn" style="margin-top:0">PRATINJAU dengan ${esc(shapePreviewTpl)} (${b}×${h}), D10, cover ${c}, hook 135°</div>
+    <div class="mono" style="font-size:12px;line-height:1.7">
+      ${rows || '<div class="wiz-hint">— isi segmen —</div>'}
+      <div>hook: ${nHook} × ${hook135} (135°) = ${nHook * hook135} mm</div>
+      <div>bend deduction: ${ok ? '0 mm (koreksi nonaktif)' : '—'}</div>
+      <hr style="border:none;border-top:1px solid var(--garis)">
+      <div><b>panjang potong ≈ ${ok && rows ? (6000 + nHook * hook135) : '—'} mm</b></div>
+    </div>`;
+}
+
+// evaluasi ekspresi aman di frontend (whitelist — mirror parser backend)
+function evalEkspresiAman(expr, vars) {
+  const ALLOWED = ['L', 'b', 'h', 'c', 'Ld', 'd', 'tekuk'];
+  // ganti nama variabel jadi angka dulu, lalu parse manual sederhana
+  let s = expr;
+  ALLOWED.forEach(v => { s = s.split(v).join(`(${JSON.stringify(vars[v] ?? 0)})`); });
+  // setelah substitusi, hanya angka + operator + kurung — aman untuk eval
+  if (/[^0-9+\-*/().\s]/.test(s)) throw new Error('variabel tidak dikenal');
+  const val = Function(`"use strict";return (${s});`)();
+  if (typeof val !== 'number' || !isFinite(val)) throw new Error('hasil tidak valid');
+  return val;
+}
+
+async function shapeSave() {
+  const kode = $('shKode').value.trim();
+  const nama = $('shNama').value.trim();
+  const deskripsi = $('shDesk').value.trim();
+  if (!kode) { alert('Kode shape wajib.'); return; }
+  const segmen = [...document.querySelectorAll('#shSegmen .shape-row')].map(r => ({
+    id: r.querySelector('.sh-sid').value.trim() || 'A',
+    panjang: r.querySelector('.sh-spanjang').value.trim() }));
+  const bengkokan = [...document.querySelectorAll('#shBengkokan .shape-row')].map(r => ({
+    sudut: r.querySelector('.sh-bsudut').value, jumlah: parseInt(r.querySelector('.sh-bjumlah').value) || 1 }));
+  const hook = [...document.querySelectorAll('#shHook .shape-row')].map(r => ({
+    sudut: r.querySelector('.sh-hsudut').value, jumlah: parseInt(r.querySelector('.sh-hjumlah').value) || 1 }));
+  if (!segmen.length) { alert('Minimal satu segmen.'); return; }
+  const shapes = {};
+  const d = await (await fetch(`/api/projects/${proyekAktif}/shapes`)).json();
+  if (d.ok) Object.assign(shapes, d.shapes);
+  shapes[kode] = { nama, deskripsi, segmen, bengkokan, hook };
+  const res = await fetch(`/api/projects/${proyekAktif}/shapes`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shapes }) });
+  const r = await res.json();
+  if (!r.ok) { alert(r.error || 'Gagal simpan'); return; }
+  alert('Bentuk tersimpan. File lama diarsipkan.');
+  renderSetupPage('bentuk');
+}
+
 // ── editor elemen (PATCH-05 §5) — form template elemen ─────
 let elemenDraft = null;
 
@@ -971,8 +1239,10 @@ function bukaEditorElemen() {
   if (!proyekBerlapis) { alert('Proyek ini belum berlapis — pakai panel Nilai teknis.'); return; }
   elemenDraft = JSON.parse(JSON.stringify(
     (proyekRaw.templates && (proyekRaw.templates.balok || proyekRaw.templates)) || {}));
-  $('elemModal').style.display = 'flex';
-  renderElemEditor();
+  muatShapeOptions().then(() => {
+    $('elemModal').style.display = 'flex';
+    renderElemEditor();
+  });
 }
 function elemModalClose() { $('elemModal').style.display = 'none'; elemenDraft = null; }
 
@@ -1002,6 +1272,7 @@ function tplBlockHtml(nama, t, editable = true) {
         <option value="pinggang" ${x.posisi === 'pinggang' ? 'selected' : ''}>pinggang</option></select>
       <input class="t-dia" type="number" value="${x.dia}" placeholder="Ø">
       <input class="t-jum" type="number" value="${x.jumlah}" placeholder="jml">
+      <select class="t-shape" title="shape tulangan">${shapeOptions(x.shape || '01')}</select>
       <label class="wiz-hint"><input class="t-dua" type="checkbox" ${x.tumpuan_kedua_ujung ? 'checked' : ''}> 2 ujung</label>
       <button class="del" onclick="this.closest('.tul-row').remove()">✕</button>
     </div>`).join('');
@@ -1019,6 +1290,7 @@ function tplBlockHtml(nama, t, editable = true) {
     <button class="btn" onclick="elemAddTul(this)">+ tulangan</button>
     <div class="wiz-grid">
       <div class="wiz-field"><label>Sengkang Ø</label><input class="t-skdia" type="number" value="${sk.dia || ''}"></div>
+      <div class="wiz-field"><label>Shape sengkang</label><select class="t-skshape">${shapeOptions(sk.shape || '51')}</select></div>
       <div class="wiz-field"><label>Jarak tumpuan (mm)</label><input class="t-skt" type="number" value="${sk.jarak_tumpuan_mm || ''}"></div>
       <div class="wiz-field"><label>Jarak lapangan (mm)</label><input class="t-skl" type="number" value="${sk.jarak_lapangan_mm || ''}"></div>
       <div class="wiz-field"><label>Kaki</label><input class="t-skkaki" type="number" value="${sk.kaki || 2}"></div>
@@ -1029,12 +1301,27 @@ function tplBlockHtml(nama, t, editable = true) {
   </div>`;
 }
 
+function shapeOptions(selected) {
+  // opsi shape dari proyek — dibaca dari API saat editor dibuka
+  const opts = shapeOptionsCache || [];
+  if (!opts.length) return `<option value="${esc(selected)}">${esc(selected)}</option>`;
+  return opts.map(s => `<option value="${esc(s.kode)}" ${s.kode === selected ? 'selected' : ''}>${esc(s.kode)} ${esc(s.nama || '')}</option>`).join('');
+}
+let shapeOptionsCache = null;
+async function muatShapeOptions() {
+  try {
+    const d = await (await fetch(`/api/projects/${proyekAktif}/shapes`)).json();
+    shapeOptionsCache = d.ok ? Object.entries(d.shapes || {}).map(([k, v]) => ({ kode: k, nama: v.nama })) : null;
+  } catch (_e) { shapeOptionsCache = null; }
+}
+
 function elemAddTul(btn) {
   const list = btn.closest('.tpl-block').querySelector('.tul-list');
   const div = document.createElement('div');
   div.className = 'tul-row';
   div.innerHTML = `<select class="t-pos"><option>atas</option><option>bawah</option><option>pinggang</option></select>
     <input class="t-dia" type="number" placeholder="Ø"><input class="t-jum" type="number" placeholder="jml">
+    <select class="t-shape">${shapeOptions('01')}</select>
     <label class="wiz-hint"><input class="t-dua" type="checkbox" checked> 2 ujung</label>
     <button class="del" onclick="this.closest('.tul-row').remove()">✕</button>`;
   list.appendChild(div);
@@ -1051,7 +1338,8 @@ async function elemSave() {
       const jum = +row.querySelector('.t-jum').value;
       if (dia && jum) tulangan.push({
         posisi: row.querySelector('.t-pos').value, dia, jumlah: jum,
-        tumpuan_kedua_ujung: row.querySelector('.t-dua').checked });
+        tumpuan_kedua_ujung: row.querySelector('.t-dua').checked,
+        shape: row.querySelector('.t-shape').value });
     });
     tpls[nama] = {
       deskripsi: block.querySelector('.t-desk').value,
@@ -1062,7 +1350,8 @@ async function elemSave() {
                   jarak_tumpuan_mm: +block.querySelector('.t-skt').value,
                   jarak_lapangan_mm: +block.querySelector('.t-skl').value,
                   kaki: +block.querySelector('.t-skkaki').value,
-                  hook_sudut: +block.querySelector('.t-skhook').value },
+                  hook_sudut: +block.querySelector('.t-skhook').value,
+                  shape: block.querySelector('.t-skshape').value },
     };
   });
   if (!Object.keys(tpls).length) { alert('Minimal satu tipe elemen.'); return; }

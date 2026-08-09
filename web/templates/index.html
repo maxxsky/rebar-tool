@@ -4,52 +4,52 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rebar BBS — Verifikasi</title>
-<link rel="stylesheet" href="/static/app.css?v=9">
+<link rel="stylesheet" href="/static/app.css?v=12">
 </head>
 <body>
 
-<div class="topbar">
-  <div class="brand">Rebar BBS <span class="sub">verifikasi F4</span></div>
+<!-- ── header: brand + nav area + pilih proyek/gambar (lintas area) ── -->
+<header class="top">
+  <div class="brand">rebar <span class="sub">BBS</span></div>
+  <nav class="area-nav" role="tablist" aria-label="Area">
+    <button id="navKerja" class="area-tab active" data-area="kerja" role="tab">Kerja</button>
+    <button id="navSetup" class="area-tab" data-area="setup" role="tab">Setup</button>
+  </nav>
   <div class="projbar">
-    <select id="projSelect" class="proj-select">
+    <select id="projSelect" class="proj-select" aria-label="Proyek">
       <option value="">— pilih proyek —</option>
     </select>
-    <select id="gbrSelect" class="proj-select" style="display:none">
+    <select id="gbrSelect" class="proj-select" aria-label="Gambar" style="display:none">
       <option value="">— pilih gambar —</option>
     </select>
     <button id="btnNewGbr" class="btn" style="display:none">+ Gambar</button>
-    <span id="projLabel" class="proj-label"></span>
     <button id="btnNewProj" class="btn">+ Proyek baru</button>
   </div>
-  <div id="setupProgress" class="setup-progress"></div>
-</div>
+</header>
 
-<div class="layout">
-  <div class="col-left">
-    <div class="panel">
-      <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
-        <span>ELEMEN</span>
-        <button id="btnKelolaElem" class="btn" style="padding:3px 10px;font-size:11px" title="Kelola tipe elemen proyek">Kelola elemen</button>
-      </div>
-      <div id="elemSummary" class="elem-summary"></div>
-      <div class="hint">Bentang bersih — muka ke muka tumpuan, bukan as-ke-as.</div>
-      <div id="rowHead" class="row-head">
-        <span>tipe</span><span>bentang (mm)</span><span>jml</span><span></span>
-      </div>
-      <div id="rows"></div>
-      <button id="btnAdd" class="btn">+ baris</button>
-      <div class="ovr-actions">
-        <button id="btnHitung" class="btn primary">Hitung</button>
-        <button id="btnExcel" class="btn">Export Excel</button>
-      </div>
+<!-- ══════════════ AREA KERJA — dipakai tiap hari ══════════════ -->
+<main id="areaKerja" class="area">
+  <!-- satu baris nilai teknis ringkas -->
+  <div class="teknis-bar">
+    <span id="projLabel" class="proj-label"></span>
+    <span id="teknisRingkas" class="teknis-ringkas"></span>
+    <a href="#" id="linkLihatSemua" class="link-lihat">lihat semua →</a>
+  </div>
 
-      <!-- Kotak "Coba nilai lain" — alat bantu F4. Boleh dihapus setelah VERIFIED.md terisi. -->
-      <details id="cobaPanel" class="panel-sub">
-        <summary class="panel-title">▸ Coba nilai lain — tidak disimpan</summary>
-        <div class="wiz-hint" style="margin-bottom:8px">
-          Untuk verifikasi F4: coba nilai lain sekali jalan tanpa mengubah config.
-          Kalau hasilnya cocok dengan BBS asli, simpan permanen lewat panel
-          <b>Nilai teknis</b> di bawah.
+  <!-- form elemen -->
+  <section class="panel" aria-label="Elemen">
+    <div id="rowHead" class="row-head">
+      <span>tipe</span><span>bentang bersih</span><span>jumlah</span><span>lokasi</span><span></span>
+    </div>
+    <div id="rows"></div>
+    <button id="btnAdd" class="btn">+ baris</button>
+    <div class="ovr-actions">
+      <button id="btnHitung" class="btn primary">Hitung</button>
+      <button id="btnExcel" class="btn">Export Excel</button>
+      <details id="cobaPanel" class="coba-panel">
+        <summary>▸ Coba nilai lain</summary>
+        <div class="wiz-hint" style="margin:6px 0 8px">
+          Untuk verifikasi F4: coba nilai sekali jalan tanpa mengubah config.
         </div>
         <div class="ovr-grid">
           <label>metode<select id="ovrMetode">
@@ -63,34 +63,37 @@
         </div>
       </details>
     </div>
+  </section>
 
-    <details class="panel" id="paramPanel">
-      <summary class="panel-title" id="paramTitle">▸ NILAI TEKNIS</summary>
-      <div id="paramBody" class="param-body">…</div>
-      <div id="paramActions" class="param-actions" style="display:none">
-        <button id="btnParamEdit" class="btn">✎ Edit</button>
-        <button id="btnParamProyek" class="btn" title="Edit nilai proyek — berlaku untuk semua gambar yang tidak punya nilai sendiri">Edit parameter proyek</button>
-        <button id="btnParamYaml" class="btn">Unduh YAML</button>
-      </div>
-      <div id="paramForm" style="display:none"></div>
-    </details>
-  </div>
+  <!-- statistik pemisah -->
+  <div id="stats" class="stats" aria-live="polite"></div>
 
-  <div class="col-right">
+  <!-- hasil lebar penuh -->
+  <section class="hasil" aria-label="Hasil">
     <div id="warnBanner" class="result-banner"></div>
-    <div id="stats" class="stats"></div>
     <div class="tabs">
-      <button class="tab active" data-tab="bbs">BBS</button>
-      <button class="tab" data-tab="pola">Pola potong</button>
+      <button class="tab active" data-tab="bbs" role="tab">BBS</button>
+      <button class="tab" data-tab="pola" role="tab">Pola potong</button>
     </div>
-    <div id="tab-bbs" class="tab-body">
-      <div class="kosong">Pilih proyek & gambar, isi elemen, lalu tekan Hitung.</div>
+    <div id="tab-bbs" class="tab-body" role="tabpanel">
+      <div class="kosong">Isi elemen di atas, lalu tekan Hitung.</div>
     </div>
-    <div id="tab-pola" class="tab-body" style="display:none"></div>
-  </div>
-</div>
+    <div id="tab-pola" class="tab-body" style="display:none" role="tabpanel"></div>
+  </section>
+</main>
 
-<!-- Layar proyek baru — daftar status 5 langkah -->
+<!-- ══════════════ AREA SETUP — jarang dibuka ══════════════ -->
+<main id="areaSetup" class="area" style="display:none">
+  <aside class="setup-nav" aria-label="Setup">
+    <button class="setup-item" data-page="proyek">Proyek</button>
+    <button class="setup-item" data-page="gambar">Gambar <span id="cntGambar" class="cnt"></span></button>
+    <button class="setup-item" data-page="teknis">Nilai teknis</button>
+    <button class="setup-item" data-page="elemen">Elemen <span id="cntElemen" class="cnt"></span></button>
+  </aside>
+  <section id="setupPage" class="setup-page"></section>
+</main>
+
+<!-- wizard proyek baru (hanya proyek yang benar-benar baru) -->
 <div id="wizard" class="modal" style="display:none">
   <div class="modal-box">
     <div class="modal-head">
@@ -104,7 +107,7 @@
   </div>
 </div>
 
-<!-- Editor elemen (PATCH-05 §5) -->
+<!-- editor tipe elemen (dibuka dari Setup › Elemen) -->
 <div id="elemModal" class="modal" style="display:none">
   <div class="modal-box">
     <div class="modal-head">
@@ -119,7 +122,7 @@
   </div>
 </div>
 
-<!-- Editor parameter proyek (PATCH-05 §6) -->
+<!-- editor parameter proyek (dibuka dari Setup › Proyek / Nilai teknis) -->
 <div id="paramModal" class="modal" style="display:none">
   <div class="modal-box">
     <div class="modal-head">
@@ -134,6 +137,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=13"></script>
 </body>
 </html>

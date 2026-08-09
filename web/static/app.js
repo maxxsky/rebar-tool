@@ -1,4 +1,5 @@
-/* Rebar BBS web — vanilla JS. NOL logika perhitungan: semua dari backend. */
+/* Rebar BBS web — 09-SPEC redesign (Kerja/Setup). NOL logika perhitungan:
+   semua angka dari backend. Web hanya render + setup config. */
 
 const $ = (id) => document.getElementById(id);
 let templates = {};
@@ -8,7 +9,7 @@ let lastOverride = {};
 let proyekAktif = localStorage.getItem('rebar_proyek') || '';
 
 const fmtM = (mm) => (mm / 1000).toFixed(3);
-const fmtKg = (v) => v.toFixed(2);
+const fmtKg = (v) => Number(v || 0).toFixed(2);
 
 // ── proyek & gambar (08 berlapis) ─────────────────────────
 let gambarAktif = '';
@@ -17,6 +18,8 @@ let proyekRaw = null;       // config & templates efektif proyek/gambar aktif
 let proyekDefault = null;   // config default proyek (berlapis, 08)
 let drawingAsal = null;     // asal tiap nilai: {selimut_beton_mm: {balok: {nilai, asal}}}
 let wideOverride = null;    // nilai cobaan 'Hitung dengan nilai ini' (PATCH-02/04)
+let areaAktif = 'kerja';    // 09-SPEC: 'kerja' | 'setup'
+let setupPageAktif = 'proyek';
 
 async function loadProjek() {
   const d = await (await fetch('/api/projects')).json();
@@ -40,6 +43,7 @@ async function pilihProyek(kode) {
     $('projLabel').textContent = '';
     $('gbrSelect').style.display = 'none';
     $('btnNewGbr').style.display = 'none';
+    updateSetupNav();
     return;
   }
   proyekAktif = kode;
@@ -59,9 +63,8 @@ async function pilihProyek(kode) {
       `${d.config.sumber.dokumen} ${d.config.sumber.revisi}`;
     $('gbrSelect').style.display = 'none';
     $('btnNewGbr').style.display = 'none';
-    renderParamFromConfig(d.config, []);
-    renderSetupProgress();
-    renderElemSummary();
+    renderTeknisRingkas(proyekRaw.config);
+    updateSetupNav();
     return;
   }
 
@@ -75,13 +78,14 @@ async function pilihProyek(kode) {
       `<option value="${g.kode}">${g.kode} ${g.revisi} — ${g.nama}</option>`).join('');
   gsel.style.display = '';
   $('btnNewGbr').style.display = '';
+  refreshTipeOptions();
   if (dl.drawings && dl.drawings.length) {
     gambarAktif = dl.drawings[0].kode;
     gsel.value = gambarAktif;
     await pilihGambar(gambarAktif);
   } else {
     $('projLabel').textContent = `${kode} — belum ada gambar`;
-    renderElemSummary();
+    updateSetupNav();
   }
 }
 
@@ -94,12 +98,12 @@ async function pilihGambar(gkode) {
   drawingAsal = d.asal || null;
   proyekRaw = { config: d.config_efektif, templates: d.templates,
                 override: d.override || {} };
+  refreshTipeOptions();
   const info = d.drawing || {};
   $('projLabel').textContent =
     `${proyekAktif} · ${gkode} ${info.revisi || ''} — ${info.nama || ''}`;
-  renderPanelView(d.config_efektif);
-  renderSetupProgress();
-  renderElemSummary();
+  renderTeknisRingkas(d.config_efektif);
+  updateSetupNav();
 }
 
 $('gbrSelect').onchange = (e) => pilihGambar(e.target.value);
@@ -120,12 +124,36 @@ $('btnNewGbr').onclick = async () => {
   await pilihProyek(proyekAktif);
   $('gbrSelect').value = kode;
   await pilihGambar(kode);
+  if (areaAktif === 'setup') renderSetupPage(setupPageAktif);
 };
-
-function updateProjLabel() { /* diganti pilihProyek/pilihGambar */ }
 
 $('projSelect').onchange = (e) => pilihProyek(e.target.value);
 $('btnNewProj').onclick = () => bukaWizard('baru');
+
+// ── area Kerja / Setup (09-SPEC §2) ────────────────────────
+function switchArea(area) {
+  areaAktif = area;
+  document.querySelectorAll('.area-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.area === area));
+  $('areaKerja').style.display = area === 'kerja' ? '' : 'none';
+  $('areaSetup').style.display = area === 'setup' ? '' : 'none';
+  if (area === 'setup') renderSetupPage(setupPageAktif);
+}
+$('navKerja').onclick = () => switchArea('kerja');
+$('navSetup').onclick = () => switchArea('setup');
+$('linkLihatSemua').onclick = (e) => { e.preventDefault(); switchArea('setup'); };
+
+// satu baris nilai teknis ringkas (09-SPEC §3.1)
+function renderTeknisRingkas(cfg) {
+  const box = $('teknisRingkas');
+  if (!cfg) { box.textContent = ''; return; }
+  const cover = Object.entries(cfg.cover || {})
+    .map(([k, v]) => `cover ${k}=${v}`).join(' ');
+  const ld = Object.entries(cfg.ld || {})
+    .map(([k, v]) => `Ld D${k}=${v}`).join(' ');
+  const metode = cfg.metode_hitung || '';
+  box.textContent = `${cover} · ${ld} · ${metode}`;
+}
 
 // ── layar proyek baru (PATCH-04 §7) — daftar status 5 langkah ──
 let wiz = null;      // { mode, kode, config, templates }
@@ -148,11 +176,10 @@ function wizClose() { $('wizard').style.display = 'none'; wiz = null; }
 $('wizClose').onclick = wizClose;
 
 function renderWizard() {
+  const wajib = (v) => v ? '' : ' <span style="color:var(--karat)">* wajib</span>';
   const c = wiz.config;
-  const wajib = (v) => (v && String(v).trim()) ? ' ✅' : '';
   const isEdit = wiz.mode === 'edit';
   $('wizBody').innerHTML = `
-    <div class="wiz-hint" style="margin-bottom:10px">Alur setup proyek — 5 langkah. Boleh lompat; yang penting tahu mana yang belum.</div>
     <div class="steps" style="margin-bottom:12px">
       <span class="step active">1 Buat proyek</span>
       <span class="step">2 Parameter proyek</span>
@@ -176,7 +203,7 @@ function renderWizard() {
     <div class="wiz-field"><label>Catatan sumber</label>
       <input id="n1cat" value="${esc(c.sumber.catatan)}" placeholder="tabel notes GS-01 sheet 2"></div>
     ${isEdit ? '' : `<div class="wiz-hint" style="margin-top:8px">
-      Setelah proyek dibuat: isi parameter proyek & tambah gambar lewat panel kiri.</div>`}`;
+      Setelah proyek dibuat: isi parameter proyek & tambah gambar lewat Setup.</div>`}`;
   $('wizSave').style.display = '';
 }
 
@@ -219,48 +246,65 @@ $('wizSave').onclick = async () => {
   await loadProjek();
   $('projSelect').value = c.proyek.kode;
   await pilihProyek(c.proyek.kode);
+  switchArea('setup');
+  renderSetupPage('proyek');
 };
 
-// ── baris elemen ───────────────────────────────────────────
+// ── baris elemen (09-SPEC §3.2: select tipe, mm suffix, lokasi) ──
 function renderRows(n) {
   const box = $('rows');
   box.innerHTML = '';
   for (let i = 0; i < n; i++) box.appendChild(newRow());
 }
-function newRow() {
+function tipeOptions(selected) {
+  const tpls = (templates && (templates.balok || templates)) || {};
+  const names = Object.keys(tpls);
+  if (!names.length) return '<option value="">— belum ada tipe —</option>';
+  return '<option value="">— pilih —</option>' + names.map(t =>
+    `<option value="${esc(t)}" ${t === selected ? 'selected' : ''}>${esc(t)}</option>`).join('');
+}
+function newRow(tipe = '', bentang = '', jumlah = '', lokasi = '') {
   const div = document.createElement('div');
   div.className = 'elem-row';
   div.innerHTML = `
-    <input list="tipeList" placeholder="B1" class="t-tipe">
-    <input type="number" step="any" min="1" placeholder="6000" class="t-bentang">
-    <input type="number" step="1" min="1" placeholder="1" class="t-jumlah">
+    <select class="t-tipe" title="tipe elemen (dari template)">${tipeOptions(tipe)}</select>
+    <div class="unit-mm"><input type="number" step="any" min="1" placeholder="6000" class="t-bentang" value="${esc(bentang)}"><span>mm</span></div>
+    <input type="number" step="1" min="1" placeholder="1" class="t-jumlah" value="${esc(jumlah)}">
+    <input type="text" placeholder="Lt.2 as A-B" class="t-lokasi" value="${esc(lokasi)}">
     <button class="del" title="hapus">✕</button>`;
   div.querySelector('.del').onclick = () => {
     if (document.querySelectorAll('.elem-row').length > 1) div.remove();
   };
+  // Enter di baris terakhir → baris baru; Ctrl+Enter → Hitung (global juga)
+  div.querySelector('.t-jumlah').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.ctrlKey) {
+      e.preventDefault();
+      const rowsAll = document.querySelectorAll('.elem-row');
+      if (div === rowsAll[rowsAll.length - 1]) $('rows').appendChild(newRow());
+    }
+  });
   return div;
 }
 $('btnAdd').onclick = () => $('rows').appendChild(newRow());
-$('rows').addEventListener('input', (e) => {
-  const dl = document.createElement('datalist');
-  dl.id = 'tipeList';
-  Object.keys((templates.balok) || {}).forEach(t => {
-    const o = document.createElement('option');
-    o.value = t; dl.appendChild(o);
-  });
-  if (!$('tipeList')) document.body.appendChild(dl);
-});
 
 // ── baca input ─────────────────────────────────────────────
+function refreshTipeOptions() {
+  // setelah proyek/gambar berubah, isi ulang <select> tipe di semua baris
+  document.querySelectorAll('.elem-row .t-tipe').forEach(sel => {
+    const cur = sel.value;
+    sel.innerHTML = tipeOptions(cur);
+  });
+}
 function bacaElemen() {
   const out = [];
   document.querySelectorAll('.elem-row').forEach(row => {
     const tipe = row.querySelector('.t-tipe').value.trim();
     const bentang = row.querySelector('.t-bentang').value;
     const jumlah = row.querySelector('.t-jumlah').value;
+    const lokasi = row.querySelector('.t-lokasi').value.trim();
     if (!tipe && !bentang && !jumlah) return;
     out.push({ tipe, bentang_bersih_mm: Number(bentang),
-               jumlah: Number(jumlah), lokasi: '' });
+               jumlah: Number(jumlah), lokasi });
   });
   return out;
 }
@@ -294,8 +338,14 @@ async function hitung() {
   if (!d.ok) { renderError(d); return; }
 
   lastResult = d;
+  // counter override aktif di title Coba nilai lain (PATCH-04 §3, 09 §3.1)
+  const nOvr = Object.keys(override).length;
+  const s = $('cobaPanel').querySelector('summary');
+  if (s) s.textContent = nOvr
+    ? `▸ Coba nilai lain (${nOvr} aktif) — tidak disimpan`
+    : '▸ Coba nilai lain';
   renderStat(d.total);
-  renderParam(d.config, d.override_aktif || []);
+  renderTeknisRingkas(d.config);
   renderBBS(d.bbs, d);
   renderPola(d.optimizer);
 }
@@ -304,10 +354,10 @@ async function hitung() {
 function renderError(d) {
   const box = $('tab-bbs');
   const flag = d.bug_internal
-    ? '<div style="color:#b4232c;font-weight:800;margin-bottom:6px">⚠ BUG INTERNAL — laporkan ke developer</div>'
+    ? '<div style="color:var(--karat);font-weight:800;margin-bottom:6px">⚠ BUG INTERNAL — laporkan ke developer</div>'
     : '';
-  box.innerHTML = `<div style="background:#fef2f2;border:1px solid #fecaca;padding:12px;
-       border-radius:6px;color:#7f1d1d;font-family:ui-monospace,monospace;font-size:12px;
+  box.innerHTML = `<div style="background:#FBEAE5;border:1px solid #E8C4B6;padding:12px;
+       border-radius:6px;color:#7C3320;font-family:ui-monospace,monospace;font-size:12px;
        white-space:pre-wrap">${flag}${escapeHtml(d.error)}</div>`;
   $('tab-pola').innerHTML = '';
   $('stats').innerHTML = '';
@@ -349,7 +399,7 @@ function renderBBS(rows, d) {
 function renderPola(opt) {
   const box = $('tab-pola');
   const dias = Object.keys(opt).map(Number).sort((a, b) => a - b);
-  if (!dias.length) { box.innerHTML = '<div style="color:#5b6572">—</div>'; return; }
+  if (!dias.length) { box.innerHTML = '<div style="color:var(--tinta2)">—</div>'; return; }
   const cfg = lastResult.config;
   const stok = cfg.stok_mm, kerf = cfg.kerf_mm;
   let html = '';
@@ -396,7 +446,7 @@ function barHtml(p, stok, kerf) {
   return html;
 }
 
-// ── parameter panel ────────────────────────────────────────
+// ── parameter panel (Setup › Nilai teknis) ────────────────
 function renderParam(cfg, overrideAktif) {
   const oset = new Set(overrideAktif);
   const flag = (k) => oset.has(k) ? ' <span class="ovr-flag">[nilai cobaan]</span>' : '';
@@ -440,15 +490,10 @@ function renderParamFromConfig(cfg, overrideAktif) {
   renderParam(c, overrideAktif || []);
 }
 
-// ── tampilan panel dengan asal nilai (08 §5 / PATCH-04 §5) ─
-function renderPanelView(cfg) {
-  $('paramActions').style.display = proyekAktif ? '' : 'none';
-  $('paramForm').style.display = 'none';
-  $('paramBody').style.display = '';
-  $('btnParamEdit').textContent = '✎ Edit';
-  // judul panel: sebutkan gambar
+function renderPanelView(cfg, overrideAktif) {
   const gname = gambarAktif || (proyekAktif || '');
-  $('paramTitle').textContent = `▸ NILAI TEKNIS — ${gname}`;
+  const title = $('paramTitle');
+  if (title) title.textContent = `▸ NILAI TEKNIS — ${gname}`;
   if (!drawingAsal) { renderParam(cfg, []); return; }
   const a = drawingAsal;
   const m = (x) => (x && x.asal === 'gambar')
@@ -476,11 +521,31 @@ function renderPanelView(cfg) {
         'sama (A: hook total termasuk lengkung vs B: ekor lurus saja). ' +
         'Verifikasi ke BBS asli sebelum memakai hasil (F4).'
       : '') + '\n' +
-    `<span style="color:#b45309;font-size:10.5px">[dari gambar ini] = nilai khusus gambar; sisanya ikut proyek</span>`;
+    `<span style="color:var(--karat);font-size:10.5px">[dari gambar ini] = nilai khusus gambar; sisanya ikut proyek</span>`;
 }
 
 // ── edit panel (PATCH-02 §1) ───────────────────────────────
 const UWTABEL = { 10: 0.617, 13: 1.042, 16: 1.578, 19: 2.226, 22: 2.984, 25: 3.853 };
+
+function yamlDariEfektif() {
+  /* Dict format YAML asli (proyekDefault + override gambar) — dipakai form
+     edit supaya diffOverride/panelSimpanConfig dapat format yang benar.
+     proyekRaw.config dari GET drawing berformat config_efektif (hook_tail,
+     stok_mm) — bukan YAML asli. */
+  if (!proyekDefault) return JSON.parse(JSON.stringify(proyekRaw.config || {}));
+  const y = JSON.parse(JSON.stringify(proyekDefault));
+  const ovr = (proyekRaw && proyekRaw.override) || {};
+  for (const k of Object.keys(ovr)) {
+    const v = ovr[k];
+    if (v && typeof v === 'object' && !Array.isArray(v) &&
+        y[k] && typeof y[k] === 'object' && !Array.isArray(y[k])) {
+      y[k] = { ...y[k], ...v };
+    } else {
+      y[k] = v;
+    }
+  }
+  return y;
+}
 
 function diffOverride(formConfig, defConfig) {
   /* Hanya field yang beda dari default proyek — yang lain diwarisi (08 §5.1). */
@@ -524,7 +589,7 @@ function diffOverride(formConfig, defConfig) {
 
 function renderPanelEdit() {
   if (!proyekRaw) return;
-  const c = proyekRaw.config;
+  const c = yamlDariEfektif();
   const dias = new Set([...Object.keys(c.panjang_penyaluran_mm || {}),
                         ...Object.keys(c.hook.tail_135_mm || {}),
                         ...Object.keys(c.hook.tail_90_mm || {}),
@@ -592,7 +657,7 @@ function panelAddDia() {
 }
 
 function bacaPanelForm() {
-  const c = proyekRaw.config;
+  const c = yamlDariEfektif();
   c.stok.panjang_batang_mm = +$('ePanjang').value;
   c.stok.kerf_mm = +$('eKerf').value;
   c.stok.sisa_min_simpan_mm = +$('eSisa').value;
@@ -636,41 +701,46 @@ function panelPakaiSekali() {
     sengkang: c.sengkang,
   };
   showOverrideBanner();
-  renderParamFromConfig(proyekRaw.config, []);
+  switchArea('kerja');
   hitung();
 }
 
 function showOverrideBanner() {
   const b = $('warnBanner');
   const n = Object.keys(bacaOverride()).length + (wideOverride ? 1 : 0);
-  b.textContent = '⚠ Hasil ini memakai NILAI COBAAN — tidak sesuai config. Jangan dipakai untuk pemesanan. Simpan permanen lewat panel Nilai teknis kalau cocok.';
+  b.textContent = '⚠ Hasil ini memakai NILAI COBAAN — tidak sesuai config. Jangan dipakai untuk pemesanan. Simpan permanen lewat Setup › Nilai teknis kalau cocok.';
   b.className = 'show';
-  b.style.background = '#fee2e2';
-  b.style.borderBottomColor = '#b4232c';
-  $('cobaPanel').querySelector('summary').textContent =
-    `▸ Coba nilai lain (${n} aktif) — tidak disimpan`;
+  b.style.background = '#FBEAE5';
+  b.style.borderBottomColor = 'var(--karat)';
+  const s = $('cobaPanel').querySelector('summary');
+  if (s) s.textContent = `▸ Coba nilai lain (${n} aktif) — tidak disimpan`;
 }
 
 function renderSetupProgress() {
-  const box = $('setupProgress');
-  if (!proyekAktif) { box.innerHTML = ''; return; }
+  // 09-SPEC: diganti oleh updateSetupNav() — dipanggil dari tempat lama.
+  updateSetupNav();
+}
+
+function updateSetupNav() {
+  // counter navigasi Setup (09-SPEC §4) + tombol Hitung nonaktif kalau kosong
   const tplCount = proyekRaw && proyekRaw.templates && (proyekRaw.templates.balok || proyekRaw.templates)
     ? Object.keys(proyekRaw.templates.balok || proyekRaw.templates).length : 0;
-  const gCount = $('gbrSelect').options.length - 1;
-  const p = proyekBerlapis
-    ? `<span class="ok">✓ parameter proyek</span> <span class="ok">✓ ${gCount} gambar</span>` +
-      (tplCount ? ` <span class="ok">✓ ${tplCount} template elemen</span>`
-                : ` <span class="warn">⚠ belum ada template elemen</span>`)
-    : `<span class="ok">✓ parameter proyek</span> <span class="warn">⚠ belum ada gambar</span>`;
-  box.innerHTML = `${proyekAktif} — ${p}`;
-  // tombol Hitung nonaktif kalau template kosong
+  const gCount = $('gbrSelect') ? $('gbrSelect').options.length - 1 : 0;
+  const cg = $('cntGambar'), ce = $('cntElemen');
+  if (cg) { cg.textContent = gCount > 0 ? gCount : '⚠'; cg.className = 'cnt' + (gCount ? '' : ' warn'); }
+  if (ce) { ce.textContent = tplCount > 0 ? tplCount : '⚠'; ce.className = 'cnt' + (tplCount ? '' : ' warn'); }
   const btn = $('btnHitung');
-  if (!tplCount) {
-    btn.disabled = true;
-    btn.title = 'Setup belum lengkap — tambahkan template elemen lewat panel Nilai teknis.';
-  } else {
-    btn.disabled = false;
-    btn.title = '';
+  if (btn) {
+    if (!proyekAktif) {
+      btn.disabled = true;
+      btn.title = 'Pilih proyek & gambar dulu.';
+    } else if (!tplCount) {
+      btn.disabled = true;
+      btn.title = 'Setup belum lengkap — tambahkan tipe elemen lewat Setup › Elemen.';
+    } else {
+      btn.disabled = false;
+      btn.title = '';
+    }
   }
 }
 
@@ -699,6 +769,7 @@ async function panelSimpanConfig() {
     $('warnBanner').className = '';
     alert('Tersimpan ke gambar. File lama diarsipkan.');
     await pilihGambar(gambarAktif);
+    renderSetupPage('teknis');
     return;
   }
 
@@ -715,15 +786,154 @@ async function panelSimpanConfig() {
   $('warnBanner').className = '';
   alert('Tersimpan. File lama diarsipkan.');
   await pilihProyek(proyekAktif);
+  renderSetupPage('teknis');
 }
 
-$('btnParamEdit').onclick = () => renderPanelEdit();
-$('btnParamYaml').onclick = () => {
+function unduhYaml() {
   const a = document.createElement('a');
   a.href = `/api/projects/${proyekAktif}/yaml`;
   a.download = `${proyekAktif}.yaml`;
   a.click();
-};
+}
+
+// ── Setup pages (09-SPEC §4) ───────────────────────────────
+function renderSetupPage(page) {
+  setupPageAktif = page;
+  document.querySelectorAll('.setup-item').forEach(b =>
+    b.classList.toggle('active', b.dataset.page === page));
+  const body = $('setupPage');
+  if (page === 'proyek') return renderSetupProyek(body);
+  if (page === 'gambar') return renderSetupGambar(body);
+  if (page === 'teknis') return renderSetupTeknis(body);
+  if (page === 'elemen') return renderSetupElemen(body);
+}
+
+function renderSetupProyek(body) {
+  if (!proyekAktif) {
+    body.innerHTML = `<h2>Proyek</h2><div class="kosong">
+      Pilih proyek di kanan atas, atau buat proyek baru.<br>
+      <button class="btn primary" onclick="bukaWizard('baru')">+ Proyek baru</button>
+    </div>`;
+    return;
+  }
+  const c = proyekDefault || (proyekRaw && proyekRaw.config) || {};
+  const uw = Object.entries(c.unit_weight_kg_per_m || {})
+    .map(([d, v]) => `D${d}=${v}`).join(' ');
+  const lds = Object.entries(c.panjang_penyaluran_mm || {})
+    .map(([d, v]) => `D${d}=${v}`).join(' ');
+  body.innerHTML = `
+    <h2>Proyek — ${esc(c.proyek ? c.proyek.nama : proyekAktif)}</h2>
+    <div class="sub">Nilai di halaman ini berlaku untuk semua gambar yang tidak punya nilai sendiri.</div>
+    <div class="daftar-item"><div class="info">
+      <b>${esc(proyekAktif)}</b> · stok ${c.stok ? c.stok.panjang_batang_mm : '—'} mm ·
+      kerf ${c.stok ? c.stok.kerf_mm : '—'} mm · sisa min ${c.stok ? c.stok.sisa_min_simpan_mm : '—'} mm<br>
+      <small>unit weight: ${uw || '—'}</small><br>
+      <small>Ld default: ${lds || '—'}</small>
+    </div>
+    <div class="aksi">
+      <button class="btn kecil" onclick="bukaEditorParam()">Edit parameter proyek</button>
+      <button class="btn kecil" onclick="unduhYaml()">Unduh YAML</button>
+    </div></div>`;
+}
+
+function renderSetupGambar(body) {
+  if (!proyekAktif || !proyekBerlapis) {
+    body.innerHTML = `<h2>Gambar</h2><div class="kosong">
+      Pilih proyek berlapis dulu di kanan atas.</div>`;
+    return;
+  }
+  (async () => {
+    const d = await (await fetch(`/api/projects/${proyekAktif}/drawings`)).json();
+    const list = (d.drawings || []).map(g => `
+      <div class="daftar-item"><div class="info">
+        <b>${esc(g.kode)}</b> ${esc(g.revisi)} — ${esc(g.nama)}<br>
+        <small>${g.tanggal || ''} · ${g.n_override} nilai di-override</small>
+      </div>
+      <div class="aksi">
+        <button class="btn kecil" onclick="pilihGambarDariSetup('${esc(g.kode)}')">Buka</button>
+        <button class="btn kecil" onclick="duplikatGambar('${esc(g.kode)}')">Duplikat</button>
+      </div></div>`).join('');
+    body.innerHTML = `
+      <h2>Gambar</h2>
+      <div class="sub">Nilai teknis di halaman ini hanya berlaku untuk gambar yang dipilih.</div>
+      ${list || '<div class="kosong">Belum ada gambar.</div>'}
+      <div style="margin-top:10px"><button class="btn" onclick="tambahGambar()">+ Gambar</button></div>`;
+  })();
+}
+
+function pilihGambarDariSetup(kode) {
+  $('gbrSelect').value = kode;
+  pilihGambar(kode);
+  renderSetupPage('teknis');
+}
+function tambahGambar() { $('btnNewGbr').click(); }
+async function duplikatGambar(kode) {
+  const baru = prompt(`Kode gambar baru (duplikat dari ${kode}):`, `${kode}-DUP`);
+  if (!baru) return;
+  const d = await (await fetch(`/api/projects/${proyekAktif}/drawings/${kode}`)).json();
+  if (!d.ok) { alert(d.error || 'Gagal baca gambar'); return; }
+  const nama = prompt('Nama gambar baru:', (d.drawing && d.drawing.nama) || baru);
+  const revisi = prompt('Revisi:', (d.drawing && d.drawing.revisi) || 'Rev.1');
+  const tanggal = prompt('Tanggal (YYYY-MM-DD):', (d.drawing && d.drawing.tanggal) || '');
+  if (!nama || !revisi || !tanggal) { alert('nama, revisi, tanggal wajib.'); return; }
+  const res = await fetch(`/api/projects/${proyekAktif}/drawings`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kode: baru, nama, revisi, tanggal,
+                           override: d.override || {} })
+  });
+  const r = await res.json();
+  if (!r.ok) { alert(r.error || 'Gagal duplikat'); return; }
+  await pilihProyek(proyekAktif);
+  $('gbrSelect').value = baru;
+  await pilihGambar(baru);
+  renderSetupPage('gambar');
+}
+
+function renderSetupTeknis(body) {
+  if (!proyekAktif) {
+    body.innerHTML = `<h2>Nilai teknis</h2><div class="kosong">Pilih proyek dulu.</div>`;
+    return;
+  }
+  const gname = gambarAktif || '(belum ada gambar)';
+  body.innerHTML = `
+    <h2>Nilai teknis — ${esc(gname)}</h2>
+    <div class="sub">Nilai di halaman ini hanya berlaku untuk ${esc(gambarAktif || 'gambar aktif')}. Gambar lain tidak terpengaruh.</div>
+    <details class="panel" id="paramPanel" open>
+      <summary class="panel-title" id="paramTitle">▸ NILAI TEKNIS — ${esc(gname)}</summary>
+      <div id="paramBody" class="param-body">…</div>
+      <div id="paramActions" class="param-actions" style="display:none">
+        <button id="btnParamEdit" class="btn">✎ Edit</button>
+        <button id="btnParamProyek" class="btn" title="Edit nilai proyek — berlaku untuk semua gambar yang tidak punya nilai sendiri">Edit parameter proyek</button>
+        <button id="btnParamYaml" class="btn">Unduh YAML</button>
+      </div>
+      <div id="paramForm" style="display:none"></div>
+    </details>`;
+  $('btnParamEdit').onclick = () => renderPanelEdit();
+  $('btnParamProyek').onclick = () => bukaEditorParam();
+  $('btnParamYaml').onclick = () => unduhYaml();
+  if (proyekRaw) renderPanelView(proyekRaw.config, []);
+  else renderParamFromConfig(proyekDefault || {}, []);
+}
+
+function renderSetupElemen(body) {
+  if (!proyekAktif || !proyekBerlapis) {
+    body.innerHTML = `<h2>Elemen</h2><div class="kosong">
+      Pilih proyek berlapis dulu di kanan atas.</div>`;
+    return;
+  }
+  const tpls = (proyekRaw && proyekRaw.templates && (proyekRaw.templates.balok || proyekRaw.templates)) || {};
+  const names = Object.keys(tpls);
+  body.innerHTML = `
+    <h2>Elemen</h2>
+    <div class="sub">Template elemen milik proyek — dipakai di semua gambar.</div>
+    ${names.length
+      ? names.map(n => `
+        <div class="daftar-item"><div class="info">
+          <b>${esc(n)}</b> · ${esc(tplRingkasanSatu(n, tpls[n]))}
+        </div></div>`).join('')
+      : '<div class="kosong">Proyek ini belum punya tipe elemen. Tambahkan di bawah.</div>'}
+    <div style="margin-top:10px"><button class="btn" onclick="bukaEditorElemen()">Kelola elemen</button></div>`;
+}
 
 // ── panel elemen — ringkasan template (PATCH-05 §3-4) ──────
 function tplRingkasanSatu(nama, t) {
@@ -736,6 +946,7 @@ function tplRingkasanSatu(nama, t) {
 
 function renderElemSummary() {
   const box = $('elemSummary');
+  if (!box) return;   // hanya ada di layout lama; 09-SPEC pakai Setup › Elemen
   const raw = proyekRaw && proyekRaw.templates;
   const tpls = (raw && (raw.balok || raw)) || {};
   const names = Object.keys(tpls);
@@ -862,15 +1073,14 @@ async function elemSave() {
   const d = await res.json();
   if (!d.ok) { alert(d.error || 'Gagal simpan'); return; }
   elemModalClose();
-  // muat ulang panel elemen
+  // muat ulang templates + counter
   const gd = await (await fetch(`/api/projects/${proyekAktif}/drawings/${gambarAktif}`)).json();
   if (gd.ok) { templates = gd.templates; proyekRaw.templates = gd.templates; }
-  renderElemSummary();
-  renderSetupProgress();
+  updateSetupNav();
+  renderSetupPage('elemen');
 }
 
 $('elemSave').onclick = elemSave;
-$('btnKelolaElem').onclick = bukaEditorElemen;
 
 // ── editor parameter proyek (PATCH-05 §6) ──────────────────
 function bukaEditorParam() {
@@ -993,10 +1203,10 @@ async function paramSave() {
   if (!d.ok) { alert(d.error || 'Gagal simpan'); return; }
   paramModalClose();
   await pilihProyek(proyekAktif);
+  renderSetupPage('proyek');
 }
 
 $('paramSave').onclick = paramSave;
-$('btnParamProyek').onclick = bukaEditorParam;
 
 // ── tab ────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
@@ -1030,6 +1240,14 @@ $('btnExcel').onclick = async () => {
   a.click();
 };
 
+// ── keyboard (09-SPEC §6): Ctrl+Enter = Hitung dari mana pun ──
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    hitung();
+  }
+});
+
 // ── init ───────────────────────────────────────────────────
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c =>
@@ -1041,10 +1259,13 @@ function escapeHtml(s) { return esc(s); }
   const projs = await loadProjek();
   renderRows(1);
   if (proyekAktif) await pilihProyek(proyekAktif);
+  updateSetupNav();
   // warning dari proyek aktif (banner)
   const d = await (await fetch('/api/config')).json();
   if (d.ok && d.config.warnings && d.config.warnings.length) {
     $('warnBanner').textContent = d.config.warnings.join(' | ');
     $('warnBanner').classList.add('show');
   }
+  // default area Kerja (09-SPEC §2)
+  switchArea('kerja');
 })();

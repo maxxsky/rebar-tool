@@ -48,7 +48,8 @@ def _baca_elemen_json(rows) -> list[ElemenInput]:
             errors.append(f"Baris {idx}: format baris tidak valid")
             continue
         tipe = str(row.get("tipe", "")).strip()
-        bentang_raw = row.get("bentang_bersih_mm")
+        # 12-SPEC §3.1: L_mm nama utama; bentang_bersih_mm alias tetap diterima
+        bentang_raw = row.get("L_mm", row.get("bentang_bersih_mm"))
         jumlah_raw = row.get("jumlah")
         lokasi = str(row.get("lokasi", "")).strip()
         if not tipe:
@@ -57,12 +58,12 @@ def _baca_elemen_json(rows) -> list[ElemenInput]:
         try:
             bentang = int(bentang_raw)
         except (TypeError, ValueError):
-            errors.append(f"Baris {idx}: bentang_bersih_mm tidak valid: "
+            errors.append(f"Baris {idx}: L_mm / bentang_bersih_mm tidak valid: "
                           f"{bentang_raw!r}")
             continue
         if bentang <= 0:
-            errors.append(f"Baris {idx}: bentang_bersih_mm harus positif: "
-                          f"{bentang}")
+            errors.append(f"Baris {idx}: L_mm / bentang_bersih_mm harus "
+                          f"positif: {bentang}")
             continue
         try:
             jumlah = int(jumlah_raw)
@@ -220,6 +221,8 @@ def _templates_dict(templates):
             "deskripsi": t.deskripsi,
             "b_mm": t.b_mm,
             "h_mm": t.h_mm,
+            "label_L": t.label_L,
+            "bantuan_L": t.bantuan_L,
             "tulangan": [{"posisi": x.posisi, "dia": x.dia,
                           "jumlah": x.jumlah,
                           "tumpuan_kedua_ujung": x.tumpuan_kedua_ujung,
@@ -227,13 +230,16 @@ def _templates_dict(templates):
                           "zona_sambung_terlarang": list(
                               x.zona_sambung_terlarang)}
                          for x in t.tulangan],
-            "sengkang": {"dia": t.sengkang.dia,
-                         "jarak_tumpuan_mm": t.sengkang.jarak_tumpuan_mm,
-                         "jarak_lapangan_mm": t.sengkang.jarak_lapangan_mm,
-                         "kaki": t.sengkang.kaki,
-                         "hook_sudut": t.sengkang.hook_sudut,
-                         "bengkokan": dict(t.sengkang.bengkokan),
-                         "shape": t.sengkang.shape},
+            # 12-SPEC §2: sengkang daftar kelompok
+            "sengkang": [{"nama": s.nama, "dia": s.dia,
+                          "jarak_tumpuan_mm": s.jarak_tumpuan_mm,
+                          "jarak_lapangan_mm": s.jarak_lapangan_mm,
+                          "kaki": s.kaki,
+                          "hook_sudut": s.hook_sudut,
+                          "bengkokan": dict(s.bengkokan),
+                          "shape": s.shape,
+                          "jumlah_per_set": s.jumlah_per_set}
+                         for s in t.sengkang],
         }
     return out
 

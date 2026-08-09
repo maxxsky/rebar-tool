@@ -275,6 +275,27 @@ function newRow(tipe = '', bentang = '', jumlah = '', lokasi = '') {
   div.querySelector('.del').onclick = () => {
     if (document.querySelectorAll('.elem-row').length > 1) div.remove();
   };
+  // 12-SPEC §8: placeholder & bantuan per baris mengikuti tipe yang dipilih
+  const bentangInput = div.querySelector('.t-bentang');
+  const selTipe = div.querySelector('.t-tipe');
+  const updateBantuan = () => {
+    const tpl = templates && templates[selTipe.value] || null;
+    const t = tpl || {};
+    bentangInput.placeholder = t.label_L || 'dimensi utama';
+    const hint = t.bantuan_L || '';
+    let el = div.querySelector('.t-hintL');
+    if (hint) {
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 't-hintL wiz-hint';
+        el.style.gridColumn = '2 / 5';
+        div.appendChild(el);
+      }
+      el.textContent = hint;
+    } else if (el) { el.remove(); }
+  };
+  selTipe.addEventListener('change', updateBantuan);
+  updateBantuan();
   // Enter di baris terakhir → baris baru; Ctrl+Enter → Hitung (global juga)
   div.querySelector('.t-jumlah').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.ctrlKey) {
@@ -293,6 +314,7 @@ function refreshTipeOptions() {
   document.querySelectorAll('.elem-row .t-tipe').forEach(sel => {
     const cur = sel.value;
     sel.innerHTML = tipeOptions(cur);
+    sel.dispatchEvent(new Event('change'));   // update placeholder/bantuan per tipe
   });
 }
 function bacaElemen() {
@@ -378,27 +400,36 @@ function renderBBS(rows, d) {
   // total_m & berat_kg dikirim backend (PATCH-06 §4) — JS TIDAK menghitung ulang
   let totalBerat = 0, totalPanjang = 0;
   rows.forEach(r => { totalBerat += r.berat_kg || 0; totalPanjang += r.total_m || 0; });
-  let html = `<table><thead><tr>
-    <th>Bar Mark</th><th>Lokasi</th><th>Posisi</th><th>Shape</th><th>Ø</th>
-    <th class="num">Panjang (m)</th><th class="num">Jumlah</th>
-    <th class="num">Total (m)</th><th class="num">Berat (kg)</th>`;
-  // 11-SPEC §10: kolom Bagian (1/2, 2/2) kalau ada sambungan
-  if (rows.some(r => r.bagian)) html += '<th>Bagian</th>';
-  html += '</tr></thead><tbody>';
-  rows.forEach(r => {
-    const bagianTxt = r.bagian ? `${r.bagian[0]}/${r.bagian[1]}` : '';
-    html += `<tr>
-      <td>${escapeHtml(r.bar_mark || '')}</td><td>${escapeHtml(r.lokasi || '')}</td><td>${escapeHtml(r.posisi)}</td>
-      <td>${escapeHtml(r.shape)}</td><td>${r.dia}</td>
-      <td class="num">${fmtM(r.panjang_mm)}</td><td class="num">${r.jumlah}</td>
-      <td class="num">${fmtKg(r.total_m)}</td><td class="num">${fmtKg(r.berat_kg)}</td>
-      ${r.bagian ? `<td>${bagianTxt}</td>` : ''}
-    </tr>`;
+  const adaSambungan = rows.some(r => r.bagian);
+  // 12-SPEC §8: kelompokkan per tipe elemen kalau >1 tipe
+  const byTipe = {};
+  rows.forEach(r => { (byTipe[r.tipe] = byTipe[r.tipe] || []).push(r); });
+  const tipeKeys = Object.keys(byTipe);
+  let html = '';
+  tipeKeys.forEach(tipe => {
+    const trows = byTipe[tipe];
+    if (tipeKeys.length > 1) html += `<h4 style="margin:12px 0 4px;font-size:13px">${esc(tipe)}</h4>`;
+    html += `<table><thead><tr>
+      <th>Bar Mark</th><th>Lokasi</th><th>Posisi</th><th>Shape</th><th>Ø</th>
+      <th class="num">Panjang (m)</th><th class="num">Jumlah</th>
+      <th class="num">Total (m)</th><th class="num">Berat (kg)</th>`;
+    if (adaSambungan) html += '<th>Bagian</th>';
+    html += '</tr></thead><tbody>';
+    trows.forEach(r => {
+      const bagianTxt = r.bagian ? `${r.bagian[0]}/${r.bagian[1]}` : '';
+      html += `<tr>
+        <td>${escapeHtml(r.bar_mark || '')}</td><td>${escapeHtml(r.lokasi || '')}</td><td>${escapeHtml(r.posisi)}</td>
+        <td>${escapeHtml(r.shape)}</td><td>${r.dia}</td>
+        <td class="num">${fmtM(r.panjang_mm)}</td><td class="num">${r.jumlah}</td>
+        <td class="num">${fmtKg(r.total_m)}</td><td class="num">${fmtKg(r.berat_kg)}</td>
+        ${r.bagian ? `<td>${bagianTxt}</td>` : ''}
+      </tr>`;
+    });
+    const colspan = adaSambungan ? 8 : 7;
+    html += `<tr class="total"><td colspan="${colspan}">TOTAL ${esc(tipe)}</td>
+      <td class="num">${fmtKg(trows.reduce((a, r) => a + (r.total_m || 0), 0))}</td>
+      <td class="num">${fmtKg(trows.reduce((a, r) => a + (r.berat_kg || 0), 0))}</td></tr></tbody></table>`;
   });
-  const colspan = rows.some(r => r.bagian) ? 8 : 7;
-  html += `<tr class="total"><td colspan="${colspan}">TOTAL</td>
-    <td class="num">${fmtKg(totalPanjang)}</td>
-    <td class="num">${fmtKg(totalBerat)}</td></tr></tbody></table>`;
   // 11-SPEC §10: baris ringkas tambahan baja
   const lr = d.lap_report || {};
   const dias = Object.keys(lr);
@@ -1295,36 +1326,73 @@ function tplBlockHtml(nama, t, editable = true) {
     <div class="tul-row">
       <select class="t-pos"><option value="atas" ${x.posisi === 'atas' ? 'selected' : ''}>atas</option>
         <option value="bawah" ${x.posisi === 'bawah' ? 'selected' : ''}>bawah</option>
-        <option value="pinggang" ${x.posisi === 'pinggang' ? 'selected' : ''}>pinggang</option></select>
+        <option value="pinggang" ${x.posisi === 'pinggang' ? 'selected' : ''}>pinggang</option>
+        <option value="utama" ${x.posisi === 'utama' ? 'selected' : ''}>utama</option></select>
       <input class="t-dia" type="number" value="${x.dia}" placeholder="Ø">
       <input class="t-jum" type="number" value="${x.jumlah}" placeholder="jml">
       <select class="t-shape" title="shape tulangan">${shapeOptions(x.shape || '01')}</select>
       <label class="wiz-hint"><input class="t-dua" type="checkbox" ${x.tumpuan_kedua_ujung ? 'checked' : ''}> 2 ujung</label>
       <button class="del" onclick="this.closest('.tul-row').remove()">✕</button>
     </div>`).join('');
-  const sk = t.sengkang || {};
+  // 12-SPEC §2: sengkang daftar kelompok
+  const sks = (t.sengkang && Array.isArray(t.sengkang)) ? t.sengkang : [t.sengkang || {}];
+  const skHtml = sks.map((sk, si) => `
+    <div class="sk-block" style="border:1px dashed var(--garis);border-radius:6px;padding:8px;margin-bottom:8px">
+      <button class="del" onclick="this.closest('.sk-block').remove()">✕ hapus kelompok</button>
+      <div class="wiz-grid">
+        <div class="wiz-field"><label>Nama</label><input class="t-sknama" value="${esc(sk.nama || '')}" placeholder="sengkang luar"></div>
+        <div class="wiz-field"><label>Sengkang Ø</label><input class="t-skdia" type="number" value="${sk.dia || ''}"></div>
+        <div class="wiz-field"><label>Shape</label><select class="t-skshape">${shapeOptions(sk.shape || '51')}</select></div>
+        <div class="wiz-field"><label>Jumlah per set</label><input class="t-skjps" type="number" min="1" value="${sk.jumlah_per_set || 1}"></div>
+        <div class="wiz-field"><label>Jarak tumpuan (mm)</label><input class="t-skt" type="number" value="${sk.jarak_tumpuan_mm || ''}"></div>
+        <div class="wiz-field"><label>Jarak lapangan (mm)</label><input class="t-skl" type="number" value="${sk.jarak_lapangan_mm || ''}"></div>
+        <div class="wiz-field"><label>Kaki</label><input class="t-skkaki" type="number" value="${sk.kaki || 2}"></div>
+        <div class="wiz-field"><label>Hook sudut</label><select class="t-skhook">
+          <option value="135" ${sk.hook_sudut === 135 ? 'selected' : ''}>135°</option>
+          <option value="90" ${sk.hook_sudut === 90 ? 'selected' : ''}>90°</option></select></div>
+      </div>
+    </div>`).join('');
   return `<div class="tpl-block">
     <button class="del" onclick="this.closest('.tpl-block').remove()">✕ hapus tipe</button>
     <div class="wiz-grid">
       <div class="wiz-field"><label>Nama tipe</label><input class="t-nama" value="${esc(nama)}"></div>
+      <div class="wiz-field"><label>Tipe elemen</label><select class="t-tipeelem">
+        <option value="balok" ${t.tipe === 'balok' ? 'selected' : ''}>balok</option>
+        <option value="kolom" ${t.tipe === 'kolom' ? 'selected' : ''}>kolom</option>
+      </select></div>
       <div class="wiz-field"><label>Deskripsi</label><input class="t-desk" value="${esc(t.deskripsi || '')}"></div>
       <div class="wiz-field"><label>b (mm)</label><input class="t-b" type="number" value="${t.b_mm}"></div>
       <div class="wiz-field"><label>h (mm)</label><input class="t-h" type="number" value="${t.h_mm}"></div>
+      <div class="wiz-field"><label>Label dimensi utama</label><input class="t-labelL" value="${esc(t.label_L || '')}" placeholder="Bentang bersih"></div>
+      <div class="wiz-field"><label>Bantuan dimensi utama</label><input class="t-bantuanL" value="${esc(t.bantuan_L || '')}" placeholder="Muka ke muka tumpuan..."></div>
     </div>
     <div class="wiz-hint">Tulangan</div>
     <div class="tul-list">${tul}</div>
     <button class="btn" onclick="elemAddTul(this)">+ tulangan</button>
-    <div class="wiz-grid">
-      <div class="wiz-field"><label>Sengkang Ø</label><input class="t-skdia" type="number" value="${sk.dia || ''}"></div>
-      <div class="wiz-field"><label>Shape sengkang</label><select class="t-skshape">${shapeOptions(sk.shape || '51')}</select></div>
-      <div class="wiz-field"><label>Jarak tumpuan (mm)</label><input class="t-skt" type="number" value="${sk.jarak_tumpuan_mm || ''}"></div>
-      <div class="wiz-field"><label>Jarak lapangan (mm)</label><input class="t-skl" type="number" value="${sk.jarak_lapangan_mm || ''}"></div>
-      <div class="wiz-field"><label>Kaki</label><input class="t-skkaki" type="number" value="${sk.kaki || 2}"></div>
-      <div class="wiz-field"><label>Hook sudut</label><select class="t-skhook">
-        <option value="135" ${sk.hook_sudut === 135 ? 'selected' : ''}>135°</option>
-        <option value="90" ${sk.hook_sudut === 90 ? 'selected' : ''}>90°</option></select></div>
-    </div>
+    <div class="wiz-hint" style="margin-top:8px">Sengkang (daftar kelompok)</div>
+    <div class="sk-list">${skHtml}</div>
+    <button class="btn" onclick="elemAddSk(this)">+ kelompok sengkang</button>
   </div>`;
+}
+
+function elemAddSk(btn) {
+  const list = btn.closest('.tpl-block').querySelector('.sk-list');
+  const div = document.createElement('div');
+  div.className = 'sk-block';
+  div.style.cssText = 'border:1px dashed var(--garis);border-radius:6px;padding:8px;margin-bottom:8px';
+  div.innerHTML = `<button class="del" onclick="this.closest('.sk-block').remove()">✕ hapus kelompok</button>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Nama</label><input class="t-sknama" placeholder="sengkang ikat"></div>
+      <div class="wiz-field"><label>Sengkang Ø</label><input class="t-skdia" type="number"></div>
+      <div class="wiz-field"><label>Shape</label><select class="t-skshape">${shapeOptions('51')}</select></div>
+      <div class="wiz-field"><label>Jumlah per set</label><input class="t-skjps" type="number" min="1" value="1"></div>
+      <div class="wiz-field"><label>Jarak tumpuan (mm)</label><input class="t-skt" type="number"></div>
+      <div class="wiz-field"><label>Jarak lapangan (mm)</label><input class="t-skl" type="number"></div>
+      <div class="wiz-field"><label>Kaki</label><input class="t-skkaki" type="number" value="2"></div>
+      <div class="wiz-field"><label>Hook sudut</label><select class="t-skhook">
+        <option value="135" selected>135°</option><option value="90">90°</option></select></div>
+    </div>`;
+  list.appendChild(div);
 }
 
 function shapeOptions(selected) {
@@ -1367,17 +1435,34 @@ async function elemSave() {
         tumpuan_kedua_ujung: row.querySelector('.t-dua').checked,
         shape: row.querySelector('.t-shape').value });
     });
+    // 12-SPEC §2: sengkang daftar kelompok
+    const sengkang = [];
+    block.querySelectorAll('.sk-list .sk-block').forEach(sk => {
+      const dia = +sk.querySelector('.t-skdia').value;
+      if (!dia) return;
+      sengkang.push({
+        nama: sk.querySelector('.t-sknama').value.trim(),
+        dia,
+        jarak_tumpuan_mm: +sk.querySelector('.t-skt').value,
+        jarak_lapangan_mm: +sk.querySelector('.t-skl').value,
+        kaki: +sk.querySelector('.t-skkaki').value,
+        hook_sudut: +sk.querySelector('.t-skhook').value,
+        shape: sk.querySelector('.t-skshape').value,
+        jumlah_per_set: +sk.querySelector('.t-skjps').value || 1,
+      });
+    });
+    if (!sengkang.length) return;
+    const tipeElem = block.querySelector('.t-tipeelem').value;
     tpls[nama] = {
+      tipe: tipeElem,
       deskripsi: block.querySelector('.t-desk').value,
       b_mm: +block.querySelector('.t-b').value,
       h_mm: +block.querySelector('.t-h').value,
+      label_L: block.querySelector('.t-labelL').value.trim() ||
+               (tipeElem === 'kolom' ? 'Tinggi bersih' : 'Bentang bersih'),
+      bantuan_L: block.querySelector('.t-bantuanL').value.trim(),
       tulangan,
-      sengkang: { dia: +block.querySelector('.t-skdia').value,
-                  jarak_tumpuan_mm: +block.querySelector('.t-skt').value,
-                  jarak_lapangan_mm: +block.querySelector('.t-skl').value,
-                  kaki: +block.querySelector('.t-skkaki').value,
-                  hook_sudut: +block.querySelector('.t-skhook').value,
-                  shape: block.querySelector('.t-skshape').value },
+      sengkang,
     };
   });
   if (!Object.keys(tpls).length) { alert('Minimal satu tipe elemen.'); return; }

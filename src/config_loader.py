@@ -16,7 +16,7 @@ from models import ConfigError, ElementTemplate, OptimizerConfig, \
     ProjectConfig, SengkangConfig, SourceInfo, StockConfig, TOOL_VERSION, \
     TemplateSengkang, TemplateTulangan
 
-ALLOWED_ALOKASI_TIPES = ("balok",)          # kolom/plat menyusul (F5/F7)
+ALLOWED_ALOKASI_TIPES = ("balok", "kolom")  # 12-SPEC F7 — kolom kedua
 ALLOWED_SENGKANG_HOOK = (90, 135)
 HOOK_SUDUT_KEYS = {90: "tail_90_mm", 135: "tail_135_mm"}
 
@@ -150,6 +150,7 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
 
     # ── sengkang ──
     sk_raw = data.get("sengkang") or {}
+    zona_raw = data.get("sengkang_zona") or {}
     try:
         faktor = _norm_float(sk_raw.get("zona_tumpuan_faktor"),
                              "zona_tumpuan_faktor", "sengkang")
@@ -165,9 +166,28 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         errors.append(f"sengkang.metode_hitung harus 'kontinyu' atau 'per_zona', "
                       f"dapat {metode!r}")
         metode = "kontinyu"
+    # 12-SPEC §4: zona sengkang — "rasio" (balok) | "panjang" (kolom)
+    zona_metode = str(zona_raw.get("metode", "rasio"))
+    if zona_metode not in ("rasio", "panjang"):
+        errors.append(f"sengkang_zona.metode harus 'rasio' atau 'panjang', "
+                      f"dapat {zona_metode!r}")
+        zona_metode = "rasio"
+    lo_expr = str(zona_raw.get("lo", ""))
+    if zona_metode == "panjang" and not lo_expr.strip():
+        errors.append(
+            "sengkang_zona.lo wajib diisi utk metode 'panjang' "
+            "(ekspresi panjang zona pengekangan, mis. 'max(h, L/6, 450)').")
+    if lo_expr.strip():
+        from shapes import parse_ekspresi
+        try:
+            parse_ekspresi(lo_expr, "sengkang_zona.lo")
+        except ConfigError as e:
+            errors.append(str(e))
     sengkang_cfg = SengkangConfig(zona_tumpuan_faktor=faktor,
                                   jarak_sengkang_pertama_mm=jarak_pertama,
-                                  metode_hitung=metode)
+                                  metode_hitung=metode,
+                                  zona_metode=zona_metode,
+                                  zona_lo_ekspresi=lo_expr)
 
     # ── optimizer ──
     opt_raw = data.get("optimizer") or {}
@@ -296,6 +316,10 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
     b = _norm_int(tpl.get("b_mm"), "b_mm", f"template.{tipe}.{nama}")
     h = _norm_int(tpl.get("h_mm"), "h_mm", f"template.{tipe}.{nama}")
     deskripsi = str(tpl.get("deskripsi", ""))
+    # 12-SPEC §3: label & bantuan dimensi utama — default balok
+    label_L = str(tpl.get("label_L", "Bentang bersih"))
+    bantuan_L = str(tpl.get(
+        "bantuan_L", "Muka ke muka tumpuan, bukan as-ke-as."))
 
     tulangan_raw = tpl.get("tulangan") or []
     tulangan = []
@@ -332,46 +356,72 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
             tumpuan_kedua_ujung=bool(t.get("tumpuan_kedua_ujung", True)),
             shape=shape, vars=vars_, zona_sambung_terlarang=tuple(zona)))
 
-    sk = tpl.get("sengkang")
-    if sk is None:
+    # 12-SPEC §2: sengkang jadi DAFTAR; objek tunggal (lama) → bungkus
+    sk_raw = tpl.get("sengkang")
+    if sk_raw is None:
         raise ConfigError(f"template.{tipe}.{nama}: sengkang wajib")
-    sk_path = f"template.{tipe}.{nama}.sengkang"
-    sk_dia = _norm_dia(sk.get("dia"))
-    sk_tt = _norm_int(sk.get("jarak_tumpuan_mm"), "jarak_tumpuan_mm", sk_path)
-    sk_tl = _norm_int(sk.get("jarak_lapangan_mm"), "jarak_lapangan_mm", sk_path)
-    sk_kaki = _norm_int(sk.get("kaki"), "kaki", sk_path)
-    sk_hook = sk.get("hook_sudut")
-    try:
-        sk_hook = int(sk_hook)
-    except (TypeError, ValueError):
-        raise ConfigError(f"{sk_path}.hook_sudut: harus angka (90 atau 135), dapat {sk_hook!r}")
-    if sk_hook not in ALLOWED_SENGKANG_HOOK:
-        raise ConfigError(f"{sk_path}.hook_sudut: hanya 90 atau 135, dapat {sk_hook}")
-
-    # PATCH-06 §1.6: jumlah bengkokan per sudut — opsional (legacy; 10-SPEC
-    # menurunkan dari shape "51" — field ini dipertahankan utk kompatibilitas).
-    bengkokan = {}
-    bk_raw = sk.get("bengkokan") or {}
-    if bk_raw:
-        if not isinstance(bk_raw, dict):
-            raise ConfigError(f"{sk_path}.bengkokan: harus mapping sudut -> jumlah")
-        for sudut, n in bk_raw.items():
-            try:
-                bengkokan[int(sudut)] = _norm_int(n, str(sudut),
-                                                  f"{sk_path}.bengkokan")
-            except ConfigError as e:
-                raise ConfigError(str(e))
-
-    # 10-SPEC §5: shape sengkang — default "51" sengkang persegi 2 kaki
-    shape = str(sk.get("shape", "51"))
+    sk_list = sk_raw if isinstance(sk_raw, list) else [sk_raw]
+    sengkang = []
+    sk_path0 = f"template.{tipe}.{nama}.sengkang"
+    # kelompok pertama jadi sumber jarak default utk yang tidak diisi
+    jarak_default = None
+    for si, sk in enumerate(sk_list):
+        sk_path = f"{sk_path0}[{si}]"
+        if not isinstance(sk, dict):
+            raise ConfigError(f"{sk_path}: definisi sengkang harus mapping")
+        # 12-SPEC §6: spiral ditolak — fitur belum ada, jangan hasil salah
+        sk_shape = str(sk.get("shape", "51"))
+        if sk_shape in ("spiral", "SPIRAL"):
+            raise ConfigError(
+                f"{sk_path}: shape 'spiral' (kolom bulat) belum didukung. "
+                f"Tunda sampai fase shape spiral tersedia.")
+        sk_dia = _norm_dia(sk.get("dia"))
+        sk_kaki = _norm_int(sk.get("kaki"), "kaki", sk_path)
+        sk_hook = sk.get("hook_sudut")
+        try:
+            sk_hook = int(sk_hook)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"{sk_path}.hook_sudut: harus angka (90 atau 135), dapat {sk_hook!r}")
+        if sk_hook not in ALLOWED_SENGKANG_HOOK:
+            raise ConfigError(f"{sk_path}.hook_sudut: hanya 90 atau 135, dapat {sk_hook}")
+        # jarak: kelompok kedua+ mewarisi dari pertama kalau kosong (§2)
+        sk_tt_raw = sk.get("jarak_tumpuan_mm")
+        sk_tl_raw = sk.get("jarak_lapangan_mm")
+        if si > 0 and jarak_default and sk_tt_raw is None:
+            sk_tt_raw = jarak_default[0]
+        if si > 0 and jarak_default and sk_tl_raw is None:
+            sk_tl_raw = jarak_default[1]
+        sk_tt = _norm_int(sk_tt_raw, "jarak_tumpuan_mm", sk_path)
+        sk_tl = _norm_int(sk_tl_raw, "jarak_lapangan_mm", sk_path)
+        if si == 0:
+            jarak_default = (sk_tt, sk_tl)
+        # PATCH-06 §1.6: bengkokan per sudut — opsional
+        bengkokan = {}
+        bk_raw = sk.get("bengkokan") or {}
+        if bk_raw:
+            if not isinstance(bk_raw, dict):
+                raise ConfigError(
+                    f"{sk_path}.bengkokan: harus mapping sudut -> jumlah")
+            for sudut, n in bk_raw.items():
+                try:
+                    bengkokan[int(sudut)] = _norm_int(n, str(sudut),
+                                                      f"{sk_path}.bengkokan")
+                except ConfigError as e:
+                    raise ConfigError(str(e))
+        jumlah_set = _norm_int(sk.get("jumlah_per_set", 1),
+                               "jumlah_per_set", sk_path)
+        sengkang.append(TemplateSengkang(
+            dia=sk_dia, jarak_tumpuan_mm=sk_tt, jarak_lapangan_mm=sk_tl,
+            kaki=sk_kaki, hook_sudut=sk_hook,
+            nama=str(sk.get("nama", f"sengkang {si + 1}")),
+            bengkokan=bengkokan, shape=sk_shape,
+            jumlah_per_set=jumlah_set))
 
     return ElementTemplate(
         nama=nama, tipe=tipe, deskripsi=deskripsi, b_mm=b, h_mm=h,
-        tulangan=tuple(tulangan),
-        sengkang=TemplateSengkang(dia=sk_dia, jarak_tumpuan_mm=sk_tt,
-                                  jarak_lapangan_mm=sk_tl, kaki=sk_kaki,
-                                  hook_sudut=sk_hook, bengkokan=bengkokan,
-                                  shape=shape))
+        tulangan=tuple(tulangan), sengkang=tuple(sengkang),
+        label_L=label_L, bantuan_L=bantuan_L)
 
 
 # ── validasi silang config ↔ template (spec §5.1) ───────────
@@ -380,8 +430,8 @@ def validate_config_templates(cfg: ProjectConfig,
                               errors: list[str]) -> None:
     """Kumpulkan semua error kelengkapan silang config ↔ template."""
     for nama, tpl in templates.items():
-        # sanity dimensi
-        for zona in ("balok",):
+        # sanity dimensi — zona cover sesuai tipe elemen (balok/kolom)
+        for zona in (tpl.tipe,):
             cover = cfg.cover.get(zona)
             if cover is not None:
                 if cover * 2 >= tpl.b_mm:
@@ -392,20 +442,21 @@ def validate_config_templates(cfg: ProjectConfig,
                     errors.append(
                         f"ERROR: template '{nama}' selimut_beton×2 ({cover * 2} mm) "
                         f">= h_mm ({tpl.h_mm} mm) — sengkang jadi negatif")
-        if tpl.sengkang.jarak_tumpuan_mm > tpl.sengkang.jarak_lapangan_mm:
-            cfg.warnings.append(
-                f"WARNING: template '{nama}' jarak_tumpuan_mm "
-                f"({tpl.sengkang.jarak_tumpuan_mm}) > jarak_lapangan_mm "
-                f"({tpl.sengkang.jarak_lapangan_mm}) — biasanya terbalik")
 
         # diameter tulangan — cek ld + unit_weight (tulangan lurus TIDAK butuh hook tail)
         for i, t in enumerate(tpl.tulangan):
             path = f"template '{nama}.tulangan[{i}]'"
             _cek_diameter(cfg, t.dia, path, errors)
-        # diameter sengkang — cek ld + unit_weight + hook tail sesuai hook_sudut
-        _cek_diameter(cfg, tpl.sengkang.dia,
-                      f"template '{nama}.sengkang'", errors,
-                      tpl.sengkang.hook_sudut)
+        # diameter sengkang (daftar, 12-SPEC §2) — cek tiap kelompok
+        for si, sk in enumerate(tpl.sengkang):
+            if sk.jarak_tumpuan_mm > sk.jarak_lapangan_mm:
+                cfg.warnings.append(
+                    f"WARNING: template '{nama}' sengkang[{si}] jarak_tumpuan_mm "
+                    f"({sk.jarak_tumpuan_mm}) > jarak_lapangan_mm "
+                    f"({sk.jarak_lapangan_mm}) — biasanya terbalik")
+            _cek_diameter(cfg, sk.dia,
+                          f"template '{nama}.sengkang[{si}]'", errors,
+                          sk.hook_sudut)
 
         # 10-SPEC §8: shape dipakai template tapi tidak ada di shapes.yaml.
         # Skip kalau cfg.shapes kosong — pemanggil langsung (test lama, jalur
@@ -418,23 +469,22 @@ def validate_config_templates(cfg: ProjectConfig,
                         f"tulangan[{i}]'\n"
                         f"  tapi tidak ada di shapes.yaml. "
                         f"Shape yang ada: {', '.join(sorted(cfg.shapes))}")
-            if tpl.sengkang.shape not in cfg.shapes:
-                errors.append(
-                    f"  Shape '{tpl.sengkang.shape}' dipakai di template "
-                    f"'{nama}.sengkang'\n"
-                    f"  tapi tidak ada di shapes.yaml. "
-                    f"Shape yang ada: {', '.join(sorted(cfg.shapes))}")
-            # §8: jumlah bengkokan > jumlah segmen + 1 → warning (biasanya
-            # salah hitung). Sengkang persegi 4 segmen punya 5 bengkokan
-            # (3×90 antar sisi + 2×hook) — itu normal, bukan salah.
-            sh = cfg.shapes.get(tpl.sengkang.shape)
-            if sh and sh.segmen:
-                n_b = sum(b.jumlah for b in sh.bengkokan)
-                if n_b > len(sh.segmen) + 1:
-                    cfg.warnings.append(
-                        f"WARNING: shape '{tpl.sengkang.shape}' dipakai template "
-                        f"'{nama}': {n_b} bengkokan > {len(sh.segmen)} segmen — "
-                        f"biasanya salah hitung.")
+            for si, sk in enumerate(tpl.sengkang):
+                if sk.shape not in cfg.shapes:
+                    errors.append(
+                        f"  Shape '{sk.shape}' dipakai di template "
+                        f"'{nama}.sengkang[{si}]'\n"
+                        f"  tapi tidak ada di shapes.yaml. "
+                        f"Shape yang ada: {', '.join(sorted(cfg.shapes))}")
+                # §8: jumlah bengkokan > jumlah segmen + 1 → warning
+                sh = cfg.shapes.get(sk.shape)
+                if sh and sh.segmen:
+                    n_b = sum(b.jumlah for b in sh.bengkokan)
+                    if n_b > len(sh.segmen) + 1:
+                        cfg.warnings.append(
+                            f"WARNING: shape '{sk.shape}' dipakai template "
+                            f"'{nama}.sengkang[{si}]': {n_b} bengkokan > "
+                            f"{len(sh.segmen)} segmen — biasanya salah hitung.")
 
 
 def _cek_diameter(cfg, dia, path, errors, hook_sudut=None):
@@ -524,7 +574,9 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
         "sengkang": {"zona_tumpuan_faktor": cfg.sengkang_cfg.zona_tumpuan_faktor,
                      "jarak_sengkang_pertama_mm":
                          cfg.sengkang_cfg.jarak_sengkang_pertama_mm,
-                     "metode_hitung": cfg.sengkang_cfg.metode_hitung},
+                     "metode_hitung": cfg.sengkang_cfg.metode_hitung,
+                     "zona_metode": cfg.sengkang_cfg.zona_metode,
+                     "zona_lo_ekspresi": cfg.sengkang_cfg.zona_lo_ekspresi},
         "lap_splice": {"metode": cfg.lap_metode,
                        "berselang_offset_mm": cfg.lap_berselang_offset_mm},
     }
@@ -541,10 +593,14 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
     m = merged["sengkang"]
     if (m.get("zona_tumpuan_faktor") != sk.zona_tumpuan_faktor
             or m.get("jarak_sengkang_pertama_mm") != sk.jarak_sengkang_pertama_mm
-            or m.get("metode_hitung") != sk.metode_hitung):
+            or m.get("metode_hitung") != sk.metode_hitung
+            or m.get("zona_metode") != sk.zona_metode
+            or m.get("zona_lo_ekspresi") != sk.zona_lo_ekspresi):
         sk = SengkangConfig(zona_tumpuan_faktor=m["zona_tumpuan_faktor"],
                             jarak_sengkang_pertama_mm=m["jarak_sengkang_pertama_mm"],
-                            metode_hitung=m.get("metode_hitung", "kontinyu"))
+                            metode_hitung=m.get("metode_hitung", "kontinyu"),
+                            zona_metode=m.get("zona_metode", "rasio"),
+                            zona_lo_ekspresi=m.get("zona_lo_ekspresi", ""))
     return dataclasses.replace(
         cfg,
         cover={int(k) if str(k).isdigit() else k: v

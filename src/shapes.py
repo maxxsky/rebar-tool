@@ -16,8 +16,9 @@ import yaml
 from models import (ConfigError, ShapeBengkokan, ShapeDef, ShapeHook,
                     ShapeSegmen)
 
-# 10-SPEC §3.1 — whitelist tertutup
-ALLOWED_VARS = {"L", "b", "h", "c", "Ld", "d", "tekuk"}
+# 10-SPEC §3.1 + 12-SPEC §3.2 — whitelist tertutup
+ALLOWED_VARS = {"L", "H", "b", "h", "c", "Ld", "d", "tekuk", "stek"}
+ALLOWED_FUNCS = {"max", "min"}   # 12-SPEC §4.1 — hanya dua ini
 
 
 # ── parser ekspresi (tanpa eval) ────────────────────────────
@@ -36,11 +37,22 @@ def parse_ekspresi(expr: str, path: str) -> ast.Expression:
             f"(posisi {e.offset}).")
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
+            # nama fungsi max/min (anak dari ast.Call) — diizinkan
+            if node.id in ALLOWED_FUNCS and isinstance(node.ctx, ast.Load):
+                continue
             if node.id not in ALLOWED_VARS:
                 raise ConfigError(
                     f"{path}: ekspresi '{expr}' memakai variabel "
                     f"'{node.id}' yang tidak dikenal. "
                     f"Variabel yang boleh: {', '.join(sorted(ALLOWED_VARS))}.")
+        elif isinstance(node, ast.Call):
+            # 12-SPEC §4.1: hanya max()/min() — celah sempit, sisanya tolak
+            if not (isinstance(node.func, ast.Name) and
+                    node.func.id in ALLOWED_FUNCS):
+                raise ConfigError(
+                    f"{path}: ekspresi '{expr}' memanggil fungsi "
+                    f"{getattr(node.func, 'id', type(node.func).__name__)}() "
+                    f"yang tidak didukung. Hanya: {', '.join(sorted(ALLOWED_FUNCS))}.")
         elif isinstance(node, ast.Constant):
             if isinstance(node.value, bool) or not isinstance(
                     node.value, (int, float)):
@@ -60,7 +72,7 @@ def parse_ekspresi(expr: str, path: str) -> ast.Expression:
                     f"di '{expr}' tidak didukung.")
         elif not isinstance(node, (ast.Expression, ast.BinOp, ast.UnaryOp,
                                    ast.operator, ast.Load, ast.Constant,
-                                   ast.Name)):
+                                   ast.Name, ast.Call)):
             raise ConfigError(
                 f"{path}: ekspresi '{expr}' memakai konstruksi "
                 f"{type(node).__name__} yang tidak didukung "
@@ -94,6 +106,13 @@ def evaluasi_ekspresi(expr: str, vars_, path: str) -> float:
                 if r == 0: raise ConfigError(
                     f"{path}: pembagian dengan nol di '{expr}'.")
                 return l // r
+        if isinstance(node, ast.Call):
+            # 12-SPEC §4.1: max()/min() — sudah divalidasi di parse_ekspresi
+            vals = [_eval(a) for a in node.args]
+            if getattr(node.func, 'id', '') == "max":
+                return max(vals)
+            if getattr(node.func, 'id', '') == "min":
+                return min(vals)
         if isinstance(node, ast.UnaryOp):
             v = _eval(node.operand)
             return -v if isinstance(node.op, ast.USub) else v

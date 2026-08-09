@@ -136,9 +136,9 @@ def test_shape_hilang_ditolak(cfg, tmp_path):
     tpl = types.SimpleNamespace(
         nama="B9", tipe="balok", b_mm=300, h_mm=600,
         tulangan=(types.SimpleNamespace(shape="99", dia=19),),
-        sengkang=types.SimpleNamespace(shape="51", dia=10, hook_sudut=135,
-                                       jarak_tumpuan_mm=150,
-                                       jarak_lapangan_mm=200))
+        sengkang=(types.SimpleNamespace(shape="51", dia=10, hook_sudut=135,
+                                        jarak_tumpuan_mm=150,
+                                        jarak_lapangan_mm=200),))
     errors = []
     validate_config_templates(cfg, {"B9": tpl}, errors)
     assert any("99" in e for e in errors), errors

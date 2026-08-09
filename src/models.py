@@ -33,6 +33,8 @@ class SengkangConfig:
     zona_tumpuan_faktor: float
     jarak_sengkang_pertama_mm: int
     metode_hitung: str = "kontinyu"   # "kontinyu" | "per_zona" — lihat spec 02 §4.3
+    zona_metode: str = "rasio"        # 12-SPEC §4: "rasio" (balok) | "panjang" (kolom)
+    zona_lo_ekspresi: str = ""        # ekspresi utk metode "panjang" (mis. "max(h, L/6, 450)")
 
 
 @dataclass(frozen=True)
@@ -127,11 +129,13 @@ class TemplateSengkang:
     jarak_lapangan_mm: int
     kaki: int
     hook_sudut: int
+    nama: str = ""          # 12-SPEC §2 — label kelompok (mis. "sengkang luar")
     # PATCH-06 §1.6: jumlah bengkokan per sudut (mis. {90: 3, 135: 2} utk
     # sengkang persegi 2 kaki). Kosong → turunkan dari bentuk standar
     # (3× sudut 90° + 2× hook_sudut) — asumsi dicatat di output.
     bengkokan: dict = field(default_factory=dict)
     shape: str = "51"     # 10-SPEC §5 — default sengkang persegi 2 kaki
+    jumlah_per_set: int = 1   # 12-SPEC §2 — batang per set (ikat = 2)
 
 
 @dataclass(frozen=True)
@@ -143,7 +147,9 @@ class ElementTemplate:
     b_mm: int
     h_mm: int
     tulangan: tuple[TemplateTulangan, ...]
-    sengkang: TemplateSengkang
+    sengkang: tuple[TemplateSengkang, ...]   # 12-SPEC §2 — daftar kelompok
+    label_L: str = "Bentang bersih"   # 12-SPEC §3 — label dimensi utama
+    bantuan_L: str = "Muka ke muka tumpuan, bukan as-ke-as."
 
 
 # ── Elemen input (F2+) ──────────────────────────────────────

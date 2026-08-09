@@ -1,18 +1,20 @@
 _meta:
   diubah_via: web
-  diubah_pada: 2026-08-06T07:28:31+08:00
+  diubah_pada: 2026-08-09T16:39:18+08:00
 balok:
   B1:
     b_mm: 300
     deskripsi: Balok induk 300x600
     h_mm: 600
     sengkang:
+      bengkokan:
+        '135': 2
+        '90': 3
       dia: 10
       hook_sudut: 135
       jarak_lapangan_mm: 200
       jarak_tumpuan_mm: 150
       kaki: 2
-      bengkokan: {90: 3, 135: 2}
     tulangan:
     - dia: 19
       jumlah: 4
@@ -31,12 +33,14 @@ balok:
     deskripsi: Balok anak 250x500
     h_mm: 500
     sengkang:
+      bengkokan:
+        '135': 2
+        '90': 3
       dia: 10
       hook_sudut: 135
       jarak_lapangan_mm: 150
       jarak_tumpuan_mm: 100
       kaki: 2
-      bengkokan: {90: 3, 135: 2}
     tulangan:
     - dia: 16
       jumlah: 3
@@ -51,14 +55,49 @@ balok:
     deskripsi: balok atap
     h_mm: 450
     sengkang:
+      bengkokan:
+        '135': 2
+        '90': 3
       dia: 10
       hook_sudut: 135
       jarak_lapangan_mm: 150
       jarak_tumpuan_mm: 100
       kaki: 2
-      bengkokan: {90: 3, 135: 2}
     tulangan:
     - dia: 16
       jumlah: 3
       posisi: atas
       tumpuan_kedua_ujung: true
+kolom:
+  K1:
+    b_mm: 400
+    bantuan_L: Muka atas pelat ke muka bawah balok.
+    deskripsi: Kolom 400x400
+    h_mm: 400
+    label_L: Tinggi bersih
+    sengkang:
+    - dia: 10
+      hook_sudut: 135
+      jarak_lapangan_mm: 150
+      jarak_tumpuan_mm: 100
+      jumlah_per_set: 1
+      kaki: 2
+      nama: sengkang luar
+      shape: '51'
+    - dia: 10
+      hook_sudut: 135
+      jarak_lapangan_mm: 150
+      jarak_tumpuan_mm: 100
+      jumlah_per_set: 2
+      kaki: 2
+      nama: sengkang ikat
+      shape: '51'
+    tipe: kolom
+    tulangan:
+    - dia: 19
+      jumlah: 8
+      posisi: utama
+      shape: '01'
+      vars:
+        L: H + stek
+        stek: 990

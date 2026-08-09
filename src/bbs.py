@@ -69,23 +69,31 @@ def panjang_potong(shape, vars_, dia, hook_sudut, cfg, elemen="balok",
     """
     from shapes import evaluasi_ekspresi
 
-    # variabel dasar (10-SPEC §3.1) — L = bentang dari input
+    # variabel dasar (10-SPEC §3.1 + 12-SPEC §3.2) — L/H = dimensi utama
+    L_val = bentang if bentang is not None else 0
     v = {
         "b": vars_.get("b_mm", 0),
         "h": vars_.get("h_mm", 0),
         "c": cfg.cover.get(elemen, 0),
         "d": dia,
         "Ld": cfg.ld.get(dia, 0),
-        "L": bentang if bentang is not None else 0,
+        "L": L_val,
+        "H": L_val,
+        "stek": 0,
     }
     # vars_ dari template: angka langsung, atau ekspresi yang di-resolve
     # terhadap variabel dasar (mis. {"L": "L + 2*Ld"} — migrasi §6).
+    # DUA PASS: angka dulu, ekspresi setelah — supaya ekspresi bisa refer
+    # variabel lain dalam vars yang sama (mis. {"L": "H + stek", "stek": 990}).
     for k, x in vars_.items():
         if k in ("b_mm", "h_mm"):
             continue
         if isinstance(x, (int, float)):
             v[k] = float(x)
-        elif isinstance(x, str):
+    for k, x in vars_.items():
+        if k in ("b_mm", "h_mm") or isinstance(x, (int, float)):
+            continue
+        if isinstance(x, str):
             v[k] = evaluasi_ekspresi(x, v, f"shape.{shape.kode}.vars.{k}")
 
     segmen = []
@@ -309,17 +317,36 @@ def keliling_sengkang(b, h, dia, hook_sudut, cfg, elemen="balok",
     return panjang
 
 
+def _panjang_zona_rapat(bentang: int, cfg: ProjectConfig,
+                        elemen: str = "balok", b_mm: int = 0,
+                        h_mm: int = 0) -> int:
+    """Panjang zona rapat di tiap ujung — 12-SPEC §4.
+
+    rasio  : faktor × dimensi utama (balok — perilaku lama)
+    panjang: ekspresi `lo` dievaluasi (kolom — mis. max(h, L/6, 450)).
+    """
+    sc = cfg.sengkang_cfg
+    if sc.zona_metode == "panjang":
+        from shapes import evaluasi_ekspresi
+        return int(round(evaluasi_ekspresi(
+            sc.zona_lo_ekspresi,
+            {"L": bentang, "H": bentang, "h": h_mm, "b": b_mm},
+            "sengkang_zona.lo")))
+    return round(sc.zona_tumpuan_faktor * bentang)
+
+
 def hitung_jumlah_sengkang(bentang: int, sk: TemplateSengkang,
-                           cfg: ProjectConfig) -> int:
-    """Jumlah sengkang per balok — metode kontinyu (default) atau per_zona."""
-    faktor = cfg.sengkang_cfg.zona_tumpuan_faktor
-    Lt = round(faktor * bentang)
+                           cfg: ProjectConfig, elemen="balok",
+                           b_mm: int = 0, h_mm: int = 0) -> int:
+    """Jumlah sengkang per elemen — kontinyu (default) / per_zona, zona
+    rasio (balok) / panjang (kolom)."""
+    Lt = _panjang_zona_rapat(bentang, cfg, elemen, b_mm, h_mm)
     Ll = bentang - 2 * Lt
 
     if Ll < 0:
         raise ValueError(
-            f"Zona tumpuan ({Lt}×2) melebihi bentang ({bentang}). "
-            f"Cek zona_tumpuan_faktor.")
+            f"Zona tumpuan ({Lt}×2) melebihi dimensi utama ({bentang}). "
+            f"Cek zona_tumpuan_faktor / sengkang_zona.lo.")
 
     d0 = cfg.sengkang_cfg.jarak_sengkang_pertama_mm
 
@@ -339,23 +366,34 @@ def hitung_jumlah_sengkang(bentang: int, sk: TemplateSengkang,
 
 
 def generate_sengkang(tpl: ElementTemplate, bentang: int, cfg: ProjectConfig,
-                      meta) -> Cut:
-    sk = tpl.sengkang
-    # 10-SPEC: sengkang pakai shape dari template (default '51')
-    shape = _get_shape(cfg, sk.shape, f"template '{tpl.nama}' sengkang")
-    vars_ = {"b_mm": tpl.b_mm, "h_mm": tpl.h_mm}
-    panjang, segmen = panjang_potong(shape, vars_, sk.dia, sk.hook_sudut,
-                                     cfg, elemen=tpl.tipe, bentang=bentang)
+                      meta) -> list[Cut]:
+    """Semua kelompok sengkang (12-SPEC §2) — return LIST.
+
+    jumlah_per_set mengalikan jumlah batang; jarak kelompok kedua+ mewarisi
+    dari pertama (sudah di-resolve di config_loader).
+    """
+    out: list[Cut] = []
     c = cfg.cover[tpl.tipe]
     lebar_dalam = tpl.b_mm - 2 * c
     tinggi_dalam = tpl.h_mm - 2 * c
-    n = hitung_jumlah_sengkang(bentang, sk, cfg)
-    return Cut(
-        dia=sk.dia, panjang_mm=panjang, jumlah=n * meta.jumlah_elemen,
-        bar_mark=meta.bar_mark, tipe_elemen=meta.tipe_elemen,
-        posisi="sengkang", shape_code=sk.shape,
-        lokasi=meta.lokasi, segmen_mm=tuple(segmen) if segmen else
-        (lebar_dalam, tinggi_dalam, lebar_dalam, tinggi_dalam))
+    for si, sk in enumerate(tpl.sengkang):
+        shape = _get_shape(cfg, sk.shape,
+                           f"template '{tpl.nama}' sengkang[{si}]")
+        vars_ = {"b_mm": tpl.b_mm, "h_mm": tpl.h_mm}
+        panjang, segmen = panjang_potong(shape, vars_, sk.dia, sk.hook_sudut,
+                                         cfg, elemen=tpl.tipe, bentang=bentang)
+        n = hitung_jumlah_sengkang(bentang, sk, cfg, elemen=tpl.tipe,
+                                   b_mm=tpl.b_mm, h_mm=tpl.h_mm)
+        n_batang = n * sk.jumlah_per_set * meta.jumlah_elemen
+        akhiran = "" if len(tpl.sengkang) == 1 else chr(97 + si)  # a, b, ...
+        out.append(Cut(
+            dia=sk.dia, panjang_mm=panjang, jumlah=n_batang,
+            bar_mark=f"{meta.bar_mark}{akhiran}",
+            tipe_elemen=meta.tipe_elemen,
+            posisi="sengkang", shape_code=sk.shape,
+            lokasi=meta.lokasi, segmen_mm=tuple(segmen) if segmen else
+            (lebar_dalam, tinggi_dalam, lebar_dalam, tinggi_dalam)))
+    return out
 
 
 # ── generate satu elemen ────────────────────────────────────
@@ -380,7 +418,7 @@ def generate_elemen(tpl: ElementTemplate, elemen: ElemenInput,
     meta_sk = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
                     lokasi=lokasi, bar_mark=f"{prefix}{tpl.nama}-SK",
                     posisi="sengkang", b_mm=tpl.b_mm, h_mm=tpl.h_mm)
-    out.append(generate_sengkang(tpl, bentang, cfg, meta_sk))
+    out.extend(generate_sengkang(tpl, bentang, cfg, meta_sk))
     return out
 
 

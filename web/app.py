@@ -103,7 +103,8 @@ def _apply_override(cfg, override: dict):
     KNOWN = {"metode_hitung", "zona_tumpuan_faktor", "kerf_mm",
              "sisa_min_simpan_mm", "stok", "cover", "ld", "lap",
              "unit_weight", "hook_tail", "bend_factor",
-             "koreksi_bend_aktif", "bend_deduction_faktor", "sengkang"}
+             "koreksi_bend_aktif", "bend_deduction_faktor", "hook_konvensi",
+             "sengkang"}
     asing = set(override) - KNOWN
     if asing:
         raise ConfigError(
@@ -120,6 +121,7 @@ def _apply_override(cfg, override: dict):
     bend = cfg.bend_factor
     bend_f = dict(cfg.bend_faktor)
     koreksi = cfg.koreksi_bend_aktif
+    konvensi = cfg.hook_konvensi
 
     # ── flat legacy (4 field) ──
     if "metode_hitung" in override:
@@ -168,6 +170,12 @@ def _apply_override(cfg, override: dict):
     if "bend_deduction_faktor" in override:
         bend_f = {int(k): int(_num(v, f"bend_deduction_faktor.{k}"))
                   for k, v in override["bend_deduction_faktor"].items()}
+    if "hook_konvensi" in override:
+        konvensi = str(override["hook_konvensi"])
+        if konvensi not in ("tail_terpisah", "hook_total"):
+            raise ConfigError(
+                f"hook_konvensi harus 'tail_terpisah' atau 'hook_total', "
+                f"dapat {konvensi!r}")
     if "sengkang" in override:
         s = override["sengkang"]
         if "zona_tumpuan_faktor" in s:
@@ -186,7 +194,8 @@ def _apply_override(cfg, override: dict):
     return dataclasses.replace(cfg, sengkang_cfg=sk, stok=stok, ld=ld, lap=lap,
                                unit_weight=uw, cover=cover, hook_tail=hook_tail,
                                bend_factor=bend, bend_faktor=bend_f,
-                               koreksi_bend_aktif=koreksi)
+                               koreksi_bend_aktif=koreksi,
+                               hook_konvensi=konvensi)
 
 
 def _templates_dict(templates):
@@ -230,6 +239,7 @@ def _config_dict(cfg):
         "zona_tumpuan_faktor": cfg.sengkang_cfg.zona_tumpuan_faktor,
         "jarak_sengkang_pertama_mm": cfg.sengkang_cfg.jarak_sengkang_pertama_mm,
         "koreksi_bend_aktif": cfg.koreksi_bend_aktif,
+        "hook_konvensi": cfg.hook_konvensi,
         "unit_weight": {str(k): v for k, v in sorted(cfg.unit_weight.items())},
         "warnings": list(cfg.warnings),
     }
@@ -787,6 +797,7 @@ def _signature_patch02(cfg_d, tpl_d):
         "ld": nd(cfg_d.get("panjang_penyaluran_mm")),
         "lap": nd(cfg_d.get("lap_splice_mm")),
         "hook": hook_sig(cfg_d.get("hook")),
+        "hook_konvensi": (cfg_d.get("hook") or {}).get("konvensi", "tail_terpisah"),
         "sengkang": {str(k): v for k, v in (cfg_d.get("sengkang") or {}).items()},
         # templates TIDAK masuk signature — definisi elemen, bukan nilai teknis
         # gambar (PATCH-05: nambah tipe elemen tidak wajib revisi).
@@ -911,6 +922,8 @@ def _override_diff(cfg_lama, cfg_baru) -> list[str]:
                 lines.append(f"sengkang.{f}: {getattr(sk_l, f)} → {getattr(sk_b, f)}")
     if cfg_lama.koreksi_bend_aktif != cfg_baru.koreksi_bend_aktif:
         lines.append(f"koreksi_bengkokan: {cfg_lama.koreksi_bend_aktif} → {cfg_baru.koreksi_bend_aktif}")
+    if cfg_lama.hook_konvensi != cfg_baru.hook_konvensi:
+        lines.append(f"konvensi hook: {cfg_lama.hook_konvensi} → {cfg_baru.hook_konvensi}")
     for s in set(cfg_lama.bend_faktor) | set(cfg_baru.bend_faktor):
         if cfg_lama.bend_faktor.get(s) != cfg_baru.bend_faktor.get(s):
             lines.append(f"bend_deduction_faktor {s}°: "

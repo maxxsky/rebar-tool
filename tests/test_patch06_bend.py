@@ -86,6 +86,36 @@ def test_bend_deduction_hasil_tidak_wajar(cfg):
                           bengkokan={90: 3, 135: 2})
 
 
+# ── 09-SPEC §8 — hook.konvensi ─────────────────────────────
+def test_hook_konvensi_default_tail_terpisah(cfg):
+    assert cfg.hook_konvensi == "tail_terpisah"
+
+
+def test_hook_konvensi_hook_total_tidak_mengurangi(cfg):
+    # hook_total: panjang hook_tail sudah termasuk lengkungan → bend deduction
+    # TIDAK dikurangi, hasil = keliling + hook (bukan − 120).
+    c2 = dataclasses.replace(cfg, koreksi_bend_aktif=True,
+                             hook_konvensi="hook_total")
+    assert bend_deduction(10, {90: 3, 135: 2}, c2) == 0
+    panjang = keliling_sengkang(300, 600, 10, 135, c2, elemen="balok",
+                                bengkokan={90: 3, 135: 2})
+    assert panjang == 1640
+
+
+def test_hook_konvensi_nilai_salah_ditolak(cfg):
+    import tempfile
+    from config_loader import load_project_config
+    import yaml as _yaml
+    data = _yaml.safe_load(
+        (CONFIG_DIR / "projects" / "PRJ-001" / "project.yaml").read_text())
+    data["hook"]["konvensi"] = "tidak_valid"
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "project.yaml"
+        p.write_text(_yaml.safe_dump(data, allow_unicode=True))
+        with pytest.raises(ConfigError, match="konvensi"):
+            load_project_config(p)
+
+
 # ── PATCH-06 §2 — proyek/gambar wajib di /api/hitung & export ─
 @pytest.fixture(scope="module")
 def client():

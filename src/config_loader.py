@@ -200,12 +200,25 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
             "terhadap BBS asli (F4). Pastikan angka tail dari gambar belum termasuk "
             "koreksi, kalau ragu matikan.")
 
+    # ── konvensi hook (09-SPEC §8) — asuransi verifikasi tertunda ──
+    hook_konvensi = str(hook_raw.get("konvensi", "tail_terpisah"))
+    if hook_konvensi not in ("tail_terpisah", "hook_total"):
+        errors.append(
+            f"hook.konvensi harus 'tail_terpisah' atau 'hook_total', "
+            f"dapat {hook_konvensi!r}")
+        hook_konvensi = "tail_terpisah"
+    if hook_konvensi == "hook_total":
+        warnings.append(
+            "WARNING: hook.konvensi = hook_total — panjang hook_tail sudah "
+            "termasuk lengkungan, bend deduction TIDAK dikurangi. Verifikasi "
+            "ke BBS asli sebelum memakai (09-SPEC §8).")
+
     return ProjectConfig(
         nama=nama, kode=kode, sumber=sumber, stok=stok, cover=cover,
         ld=ld, lap=lap, hook_tail=hook_tail, bend_factor=bend_factor,
         bend_faktor=bend_faktor, unit_weight=uw, sengkang_cfg=sengkang_cfg,
         warnings=warnings, optimizer=optimizer_cfg,
-        koreksi_bend_aktif=koreksi_bend)
+        koreksi_bend_aktif=koreksi_bend, hook_konvensi=hook_konvensi)
 
 
 def _load_dia_dict(raw, path, errors) -> dict:
@@ -427,6 +440,7 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
                  "tail_90_mm": dict(cfg.hook_tail.get(90, {})),
                  "diameter_bengkok_faktor": cfg.bend_factor,
                  "koreksi_bengkokan_aktif": cfg.koreksi_bend_aktif,
+                 "konvensi": cfg.hook_konvensi,
                  "bend_deduction_faktor": dict(cfg.bend_faktor)},
         "sengkang": {"zona_tumpuan_faktor": cfg.sengkang_cfg.zona_tumpuan_faktor,
                      "jarak_sengkang_pertama_mm":
@@ -463,6 +477,7 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
         bend_faktor={int(k): int(v) for k, v in
                      (merged["hook"].get("bend_deduction_faktor") or {}).items()},
         koreksi_bend_aktif=bool(merged["hook"].get("koreksi_bengkokan_aktif", False)),
+        hook_konvensi=str(merged["hook"].get("konvensi", "tail_terpisah")),
         sengkang_cfg=sk,
         stok=StockConfig(panjang_batang_mm=int(merged["stok"]["panjang_batang_mm"]),
                          kerf_mm=int(merged["stok"]["kerf_mm"]),

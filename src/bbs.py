@@ -31,6 +31,10 @@ def bend_deduction(dia: int, bengkokan: dict, cfg: ProjectConfig) -> int:
     """
     if not cfg.koreksi_bend_aktif:
         return 0
+    # 09-SPEC §8: hook_total = panjang hook_tail SUDAH termasuk lengkungan,
+    # jadi bend deduction tidak dikurangi lagi (sudah ada di angka hook).
+    if cfg.hook_konvensi == "hook_total":
+        return 0
     total = 0
     for sudut, n in bengkokan.items():
         if sudut not in cfg.bend_faktor:

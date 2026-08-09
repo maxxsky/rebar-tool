@@ -57,6 +57,10 @@ hook:
   diameter_bengkok_faktor: 4
   # koreksi bengkokan — OFF sampai terverifikasi ke BBS asli (F4, spec 02 §3.1)
   koreksi_bengkokan_aktif: false
+  # 09-SPEC §8 — konvensi hook: tail_terpisah (ekor lurus, deduction dihitung
+  # terpisah) | hook_total (panjang sudah termasuk lengkungan, deduction tidak
+  # dikurangi). Asuransi verifikasi tertunda — tail_terpisah = perilaku sekarang.
+  konvensi: "tail_terpisah"
   # PATCH-06 §1.5 — bend deduction per bengkokan sebagai kelipatan diameter.
   # PLACEHOLDER — owner konfirmasi ke BBS asli/praktik proyek sebelum dipakai.
   # Konvensi hook (A: hook total termasuk lengkung vs B: ekor lurus saja)

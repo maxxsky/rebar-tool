@@ -70,6 +70,7 @@ class ProjectConfig:
     sengkang_cfg: SengkangConfig
     optimizer: OptimizerConfig
     koreksi_bend_aktif: bool = False  # spec 02 §3.1 — default OFF sampai terverifikasi (F4)
+    hook_konvensi: str = "tail_terpisah"  # 09-SPEC §8: "tail_terpisah" | "hook_total"
     warnings: list = field(default_factory=list)
 
 

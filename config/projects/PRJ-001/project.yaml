@@ -4,6 +4,7 @@ _meta:
 hook:
   diameter_bengkok_faktor: 4
   koreksi_bengkokan_aktif: false
+  konvensi: "tail_terpisah"   # 09-SPEC §8
   # PATCH-06 §1.5 — placeholder; owner konfirmasi ke BBS asli sebelum dipakai.
   bend_deduction_faktor:
     45: 1

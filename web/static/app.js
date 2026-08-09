@@ -269,6 +269,7 @@ function newRow(tipe = '', bentang = '', jumlah = '', lokasi = '') {
   div.innerHTML = `
     <select class="t-tipe" title="tipe elemen (dari template)">${tipeOptions(tipe)}</select>
     <div class="unit-mm"><input type="number" step="any" min="1" placeholder="6000" class="t-bentang" value="${esc(bentang)}"><span>mm</span></div>
+    <div class="unit-mm"><input type="number" step="any" min="1" placeholder="—" class="t-bentang2" value="" style="display:none"><span style="display:none">mm</span></div>
     <input type="number" step="1" min="1" placeholder="1" class="t-jumlah" value="${esc(jumlah)}">
     <input type="text" placeholder="Lt.2 as A-B" class="t-lokasi" value="${esc(lokasi)}">
     <button class="del" title="hapus">✕</button>`;
@@ -277,18 +278,25 @@ function newRow(tipe = '', bentang = '', jumlah = '', lokasi = '') {
   };
   // 12-SPEC §8: placeholder & bantuan per baris mengikuti tipe yang dipilih
   const bentangInput = div.querySelector('.t-bentang');
+  const bentang2Wrap = div.querySelector('.t-bentang2').parentElement;
+  const bentang2Input = div.querySelector('.t-bentang2');
   const selTipe = div.querySelector('.t-tipe');
   const updateBantuan = () => {
     const tpl = templates && templates[selTipe.value] || null;
     const t = tpl || {};
     bentangInput.placeholder = t.label_L || 'dimensi utama';
+    // 13-SPEC §8: kolom Dimensi 2 muncul hanya utk plat
+    const isPlat = t.tipe === 'plat';
+    bentang2Input.style.display = isPlat ? '' : 'none';
+    bentang2Input.parentElement.querySelector('span').style.display = isPlat ? '' : 'none';
+    bentang2Input.placeholder = t.label_L2 || 'dimensi 2';
     const hint = t.bantuan_L || '';
     let el = div.querySelector('.t-hintL');
     if (hint) {
       if (!el) {
         el = document.createElement('div');
         el.className = 't-hintL wiz-hint';
-        el.style.gridColumn = '2 / 5';
+        el.style.gridColumn = '2 / 6';
         div.appendChild(el);
       }
       el.textContent = hint;
@@ -322,10 +330,12 @@ function bacaElemen() {
   document.querySelectorAll('.elem-row').forEach(row => {
     const tipe = row.querySelector('.t-tipe').value.trim();
     const bentang = row.querySelector('.t-bentang').value;
+    const b2 = row.querySelector('.t-bentang2').value;
     const jumlah = row.querySelector('.t-jumlah').value;
     const lokasi = row.querySelector('.t-lokasi').value.trim();
     if (!tipe && !bentang && !jumlah) return;
     out.push({ tipe, bentang_bersih_mm: Number(bentang),
+               L2_mm: b2 !== '' ? Number(b2) : 0,
                jumlah: Number(jumlah), lokasi });
   });
   return out;
@@ -1291,11 +1301,24 @@ async function shapeSave() {
 // ── editor elemen (PATCH-05 §5) — form template elemen ─────
 let elemenDraft = null;
 
-function bukaEditorElemen() {
+async function bukaEditorElemen() {
   if (!proyekAktif) { alert('Pilih proyek dulu.'); return; }
   if (!proyekBerlapis) { alert('Proyek ini belum berlapis — pakai panel Nilai teknis.'); return; }
-  elemenDraft = JSON.parse(JSON.stringify(
-    (proyekRaw.templates && (proyekRaw.templates.balok || proyekRaw.templates)) || {}));
+  // fetch fresh — proyekRaw.templates bisa stale setelah save (13-SPEC)
+  let tplData = proyekRaw.templates || {};
+  try {
+    const fresh = await (await fetch(`/api/projects/${proyekAktif}`)).json();
+    if (fresh.ok && fresh.templates) {
+      // gabung semua tipe jadi flat utk editor: {B1, K1, S1, ...}
+      tplData = {};
+      Object.entries(fresh.templates).forEach(([tipe, items]) => {
+        Object.entries(items || {}).forEach(([nama, t]) => {
+          tplData[nama] = { tipe, ...t };
+        });
+      });
+    }
+  } catch (_e) { /* pakai cache */ }
+  elemenDraft = JSON.parse(JSON.stringify(tplData));
   muatShapeOptions().then(() => {
     $('elemModal').style.display = 'flex';
     renderElemEditor();
@@ -1329,7 +1352,13 @@ function tplBlockHtml(nama, t, editable = true) {
         <option value="pinggang" ${x.posisi === 'pinggang' ? 'selected' : ''}>pinggang</option>
         <option value="utama" ${x.posisi === 'utama' ? 'selected' : ''}>utama</option></select>
       <input class="t-dia" type="number" value="${x.dia}" placeholder="Ø">
-      <input class="t-jum" type="number" value="${x.jumlah}" placeholder="jml">
+      <input class="t-jum" type="number" value="${x.jumlah || ''}" placeholder="jml">
+      <input class="t-jarak" type="number" value="${x.jarak_mm || ''}" placeholder="jarak" title="plat: spasi antar batang (ganti jumlah)">
+      <select class="t-arah" title="arah (plat)">
+        <option value="" ${!x.arah ? 'selected' : ''}>—</option>
+        <option value="X" ${x.arah === 'X' ? 'selected' : ''}>X</option>
+        <option value="Y" ${x.arah === 'Y' ? 'selected' : ''}>Y</option>
+      </select>
       <select class="t-shape" title="shape tulangan">${shapeOptions(x.shape || '01')}</select>
       <label class="wiz-hint"><input class="t-dua" type="checkbox" ${x.tumpuan_kedua_ujung ? 'checked' : ''}> 2 ujung</label>
       <button class="del" onclick="this.closest('.tul-row').remove()">✕</button>
@@ -1359,6 +1388,7 @@ function tplBlockHtml(nama, t, editable = true) {
       <div class="wiz-field"><label>Tipe elemen</label><select class="t-tipeelem">
         <option value="balok" ${t.tipe === 'balok' ? 'selected' : ''}>balok</option>
         <option value="kolom" ${t.tipe === 'kolom' ? 'selected' : ''}>kolom</option>
+        <option value="plat" ${t.tipe === 'plat' ? 'selected' : ''}>plat</option>
       </select></div>
       <div class="wiz-field"><label>Deskripsi</label><input class="t-desk" value="${esc(t.deskripsi || '')}"></div>
       <div class="wiz-field"><label>b (mm)</label><input class="t-b" type="number" value="${t.b_mm}"></div>
@@ -1372,6 +1402,9 @@ function tplBlockHtml(nama, t, editable = true) {
     <div class="wiz-hint" style="margin-top:8px">Sengkang (daftar kelompok)</div>
     <div class="sk-list">${skHtml}</div>
     <button class="btn" onclick="elemAddSk(this)">+ kelompok sengkang</button>
+    ${t.tipe === 'plat'
+      ? '<div class="wiz-warn" style="margin-top:8px">Plat berbentuk L atau trapesium belum didukung. Pecah jadi beberapa panel persegi panjang.</div>'
+      : ''}
   </div>`;
 }
 
@@ -1430,10 +1463,19 @@ async function elemSave() {
     block.querySelectorAll('.tul-list .tul-row').forEach(row => {
       const dia = +row.querySelector('.t-dia').value;
       const jum = +row.querySelector('.t-jum').value;
-      if (dia && jum) tulangan.push({
-        posisi: row.querySelector('.t-pos').value, dia, jumlah: jum,
-        tumpuan_kedua_ujung: row.querySelector('.t-dua').checked,
-        shape: row.querySelector('.t-shape').value });
+      const jarak = +row.querySelector('.t-jarak').value;
+      if (dia && (jum || jarak)) {
+        const trow = {
+          posisi: row.querySelector('.t-pos').value,
+          dia,
+          tumpuan_kedua_ujung: row.querySelector('.t-dua').checked,
+          shape: row.querySelector('.t-shape').value,
+        };
+        // 13-SPEC §3: tepat satu dari jumlah / jarak_mm
+        if (jarak) { trow.jarak_mm = jarak; trow.arah = row.querySelector('.t-arah').value; }
+        else trow.jumlah = jum;
+        tulangan.push(trow);
+      }
     });
     // 12-SPEC §2: sengkang daftar kelompok
     const sengkang = [];
@@ -1456,8 +1498,8 @@ async function elemSave() {
     tpls[nama] = {
       tipe: tipeElem,
       deskripsi: block.querySelector('.t-desk').value,
-      b_mm: +block.querySelector('.t-b').value,
-      h_mm: +block.querySelector('.t-h').value,
+      b_mm: +block.querySelector('.t-b').value || 0,
+      h_mm: +block.querySelector('.t-h').value || 0,
       label_L: block.querySelector('.t-labelL').value.trim() ||
                (tipeElem === 'kolom' ? 'Tinggi bersih' : 'Bentang bersih'),
       bantuan_L: block.querySelector('.t-bantuanL').value.trim(),
@@ -1466,9 +1508,15 @@ async function elemSave() {
     };
   });
   if (!Object.keys(tpls).length) { alert('Minimal satu tipe elemen.'); return; }
+  // 13-SPEC: kelompokkan per tipe elemen (balok/kolom/plat)
+  const perTipe = {};
+  Object.entries(tpls).forEach(([nama, t]) => {
+    perTipe[t.tipe] = perTipe[t.tipe] || {};
+    perTipe[t.tipe][nama] = t;
+  });
   const res = await fetch(`/api/projects/${proyekAktif}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kode: proyekAktif, config: proyekDefault, templates: { balok: tpls } })
+    body: JSON.stringify({ kode: proyekAktif, config: proyekDefault, templates: perTipe })
   });
   const d = await res.json();
   if (!d.ok) { alert(d.error || 'Gagal simpan'); return; }

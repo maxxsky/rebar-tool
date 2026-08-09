@@ -66,10 +66,10 @@ a { color: var(--baja); }
 .link-lihat { margin-left: auto; font-size: 12px; }
 
 /* ── form elemen ── */
-.row-head { display: grid; grid-template-columns: 110px 1fr 90px 1fr 30px; gap: 6px;
+.row-head { display: grid; grid-template-columns: 110px 1fr 1fr 90px 1fr 30px; gap: 6px;
             font-size: 10px; letter-spacing: .8px; text-transform: uppercase;
             color: var(--tinta2); margin-bottom: 6px; }
-.elem-row { display: grid; grid-template-columns: 110px 1fr 90px 1fr 30px; gap: 6px;
+.elem-row { display: grid; grid-template-columns: 110px 1fr 1fr 90px 1fr 30px; gap: 6px;
             margin-bottom: 6px; }
 .elem-row input, .elem-row select { width: 100%; padding: 7px 8px; font-size: 13px;
             border: 1px solid var(--garis); border-radius: 6px; background: var(--panel);
@@ -204,7 +204,7 @@ tr.total td { font-weight: 700; border-top: 2px solid var(--garis); }
 .tpl-block { border: 1px solid var(--garis); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
 .tpl-block .del { float: right; border: none; background: none; color: var(--karat);
                   font-size: 15px; cursor: pointer; }
-.tul-row { display: grid; grid-template-columns: 1fr 60px 50px 90px 90px 30px; gap: 5px;
+.tul-row { display: grid; grid-template-columns: 1fr 60px 50px 60px 55px 90px 90px 30px; gap: 5px;
            margin-bottom: 5px; align-items: center; }
 .tul-row input, .tul-row select { padding: 5px 6px; font-size: 12px;
            border: 1px solid var(--garis); border-radius: 5px; width: 100%; }
@@ -219,7 +219,7 @@ tr.total td { font-weight: 700; border-top: 2px solid var(--garis); }
   .proj-select { flex: 1; min-width: 0; }
   #areaSetup { grid-template-columns: 1fr; }
   .setup-nav { flex-direction: row; flex-wrap: wrap; }
-  .row-head, .elem-row { grid-template-columns: 90px 1fr 70px 1fr 30px; }
+  .row-head, .elem-row { grid-template-columns: 90px 1fr 1fr 70px 1fr 30px; }
   .tab-body { padding: 8px; }
   .bar { height: 34px; font-size: 11px; }
 }

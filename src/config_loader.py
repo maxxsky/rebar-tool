@@ -13,10 +13,10 @@ from pathlib import Path
 import yaml
 
 from models import ConfigError, ElementTemplate, OptimizerConfig, \
-    ProjectConfig, SengkangConfig, SourceInfo, StockConfig, TOOL_VERSION, \
-    TemplateSengkang, TemplateTulangan
+    PlatConfig, ProjectConfig, SengkangConfig, SourceInfo, StockConfig, \
+    TOOL_VERSION, TemplateSengkang, TemplateTulangan
 
-ALLOWED_ALOKASI_TIPES = ("balok", "kolom")  # 12-SPEC F7 — kolom kedua
+ALLOWED_ALOKASI_TIPES = ("balok", "kolom", "plat")  # 13-SPEC F8 — plat ketiga
 ALLOWED_SENGKANG_HOOK = (90, 135)
 HOOK_SUDUT_KEYS = {90: "tail_90_mm", 135: "tail_135_mm"}
 
@@ -225,6 +225,23 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         errors.append(str(e))
         lap_offset = 0
 
+    # ── plat (13-SPEC §3) ──
+    plat_raw = data.get("plat") or {}
+    try:
+        plat_tepi = _norm_int(plat_raw.get("jarak_tepi_mm", 50),
+                              "jarak_tepi_mm", "plat")
+    except ConfigError as e:
+        errors.append(str(e))
+        plat_tepi = 50
+    plat_metode = str(plat_raw.get("metode_hitung", "floor_plus_1"))
+    if plat_metode not in ("floor_plus_1", "ceil"):
+        errors.append(
+            f"plat.metode_hitung harus 'floor_plus_1' atau 'ceil', "
+            f"dapat {plat_metode!r}")
+        plat_metode = "floor_plus_1"
+    plat_cfg = PlatConfig(jarak_tepi_mm=plat_tepi,
+                          metode_hitung=plat_metode)
+
     # ── koreksi bengkokan (spec 02 §3.1) — default OFF ──
     koreksi_bend = hook_raw.get("koreksi_bengkokan_aktif", False)
     if not isinstance(koreksi_bend, bool):
@@ -255,7 +272,8 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         bend_faktor=bend_faktor, unit_weight=uw, sengkang_cfg=sengkang_cfg,
         warnings=warnings, optimizer=optimizer_cfg,
         koreksi_bend_aktif=koreksi_bend, hook_konvensi=hook_konvensi,
-        lap_metode=lap_metode, lap_berselang_offset_mm=lap_offset)
+        lap_metode=lap_metode, lap_berselang_offset_mm=lap_offset,
+        plat_cfg=plat_cfg)
 
 
 def _load_dia_dict(raw, path, errors) -> dict:
@@ -313,8 +331,11 @@ def load_templates(path) -> dict[str, ElementTemplate]:
 def _parse_template(tipe, nama, tpl) -> ElementTemplate:
     if not isinstance(tpl, dict):
         raise ConfigError(f"template.{tipe}.{nama}: definisi harus mapping")
-    b = _norm_int(tpl.get("b_mm"), "b_mm", f"template.{tipe}.{nama}")
-    h = _norm_int(tpl.get("h_mm"), "h_mm", f"template.{tipe}.{nama}")
+    # plat tidak punya b/h (13-SPEC) — izinkan 0
+    b = _norm_int(tpl.get("b_mm", 0), "b_mm", f"template.{tipe}.{nama}",
+                  allow_zero=tipe == "plat")
+    h = _norm_int(tpl.get("h_mm", 0), "h_mm", f"template.{tipe}.{nama}",
+                  allow_zero=tipe == "plat")
     deskripsi = str(tpl.get("deskripsi", ""))
     # 12-SPEC §3: label & bantuan dimensi utama — default balok
     label_L = str(tpl.get("label_L", "Bentang bersih"))
@@ -329,8 +350,34 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
         posisi = str(t.get("posisi", ""))
         if not posisi:
             raise ConfigError(f"{path}: posisi wajib (atas/bawah/pinggang)")
+        # 13-SPEC §3.1: tepat satu dari jumlah / jarak_mm (plat)
+        ada_jumlah = t.get("jumlah") is not None
+        ada_jarak = t.get("jarak_mm") is not None
+        if ada_jumlah == ada_jarak:
+            raise ConfigError(
+                f"{path}: tepat satu dari 'jumlah' atau 'jarak_mm' harus "
+                f"ada (dua-duanya atau nol = salah). Plat memakai jarak_mm, "
+                f"balok/kolom memakai jumlah.")
+        if ada_jumlah:
+            try:
+                jumlah = _norm_int(t.get("jumlah"), "jumlah", path)
+            except ConfigError as e:
+                raise ConfigError(str(e))
+            jarak_mm = 0
+        else:
+            jumlah = 0
+            try:
+                jarak_mm = _norm_int(t.get("jarak_mm"), "jarak_mm", path)
+            except ConfigError as e:
+                raise ConfigError(str(e))
+        # 13-SPEC §3.1: arah (plat) — "X" | "Y"
+        arah = str(t.get("arah", "")).upper()
+        if arah not in ("", "X", "Y"):
+            raise ConfigError(
+                f"{path}.arah: harus 'X' atau 'Y' (plat), dapat {arah!r}")
+        # 13-SPEC §4: zona — default 1 (membentang penuh)
         try:
-            jumlah = _norm_int(t.get("jumlah"), "jumlah", path)
+            zona = _norm_int(t.get("zona", 1), "zona", path)
         except ConfigError as e:
             raise ConfigError(str(e))
         # 10-SPEC §5: shape + vars — default "01" batang lurus.
@@ -343,10 +390,10 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
             vars_ = {"L": f"L + {n_ujung}*Ld"}
         vars_ = dict(vars_)
         # 11-SPEC §4: zona sambung terlarang — [(dari, sampai)] rasio bentang
-        zona = []
+        zona_sambung = []
         for z in (t.get("zona_sambung_terlarang") or []):
             try:
-                zona.append((float(z.get("dari")), float(z.get("sampai"))))
+                zona_sambung.append((float(z.get("dari")), float(z.get("sampai"))))
             except (TypeError, ValueError, AttributeError):
                 raise ConfigError(
                     f"{path}.zona_sambung_terlarang: tiap zona harus "
@@ -354,7 +401,8 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
         tulangan.append(TemplateTulangan(
             posisi=posisi, dia=dia, jumlah=jumlah,
             tumpuan_kedua_ujung=bool(t.get("tumpuan_kedua_ujung", True)),
-            shape=shape, vars=vars_, zona_sambung_terlarang=tuple(zona)))
+            shape=shape, vars=vars_, zona_sambung_terlarang=tuple(zona_sambung),
+            arah=arah, jarak_mm=jarak_mm, zona=zona))
 
     # 12-SPEC §2: sengkang jadi DAFTAR; objek tunggal (lama) → bungkus
     sk_raw = tpl.get("sengkang")
@@ -430,10 +478,11 @@ def validate_config_templates(cfg: ProjectConfig,
                               errors: list[str]) -> None:
     """Kumpulkan semua error kelengkapan silang config ↔ template."""
     for nama, tpl in templates.items():
-        # sanity dimensi — zona cover sesuai tipe elemen (balok/kolom)
+        # sanity dimensi — zona cover sesuai tipe elemen (balok/kolom);
+        # plat tidak punya b/h (13-SPEC) → skip
         for zona in (tpl.tipe,):
             cover = cfg.cover.get(zona)
-            if cover is not None:
+            if cover is not None and tpl.tipe != "plat":
                 if cover * 2 >= tpl.b_mm:
                     errors.append(
                         f"ERROR: template '{nama}' selimut_beton×2 ({cover * 2} mm) "
@@ -579,6 +628,8 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
                      "zona_lo_ekspresi": cfg.sengkang_cfg.zona_lo_ekspresi},
         "lap_splice": {"metode": cfg.lap_metode,
                        "berselang_offset_mm": cfg.lap_berselang_offset_mm},
+        "plat": {"jarak_tepi_mm": cfg.plat_cfg.jarak_tepi_mm,
+                 "metode_hitung": cfg.plat_cfg.metode_hitung},
     }
     merged = _deep_merge_dict(cfg_d, ovr)
 
@@ -624,6 +675,12 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
         lap_berselang_offset_mm=int(
             (merged.get("lap_splice") or {}).get("berselang_offset_mm",
                                                  cfg.lap_berselang_offset_mm)),
+        plat_cfg=PlatConfig(
+            jarak_tepi_mm=int((merged.get("plat") or {}).get(
+                "jarak_tepi_mm", cfg.plat_cfg.jarak_tepi_mm)),
+            metode_hitung=str((merged.get("plat") or {}).get(
+                "metode_hitung", cfg.plat_cfg.metode_hitung)),
+        ),
     )
 
 

@@ -1,6 +1,6 @@
 _meta:
   diubah_via: web
-  diubah_pada: 2026-08-09T16:39:18+08:00
+  diubah_pada: 2026-08-09T17:20:02+08:00
 balok:
   B1:
     b_mm: 300
@@ -101,3 +101,37 @@ kolom:
       vars:
         L: H + stek
         stek: 990
+plat:
+  S1:
+    b_mm: 0
+    bantuan_L: 'Bentang bersih arah X. Plat L/trapesium: pecah jadi panel persegi.'
+    deskripsi: Plat lantai 120mm
+    h_mm: 0
+    label_L: Bentang X
+    label_L2: Bentang Y
+    sengkang: []
+    tipe: plat
+    tulangan:
+    - arah: X
+      dia: 10
+      jarak_mm: 150
+      posisi: bawah arah X
+      shape: '01'
+      vars:
+        L: Lx + 2*Ld
+    - arah: Y
+      dia: 10
+      jarak_mm: 150
+      posisi: bawah arah Y
+      shape: '01'
+      vars:
+        L: Ly + 2*Ld
+    - arah: X
+      dia: 10
+      jarak_mm: 150
+      posisi: tumpuan arah X
+      shape: '01'
+      vars:
+        L: Lx/4 + Ld + tekuk
+        tekuk: 200
+      zona: 2

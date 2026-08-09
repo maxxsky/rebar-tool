@@ -50,6 +50,8 @@ def _baca_elemen_json(rows) -> list[ElemenInput]:
         tipe = str(row.get("tipe", "")).strip()
         # 12-SPEC §3.1: L_mm nama utama; bentang_bersih_mm alias tetap diterima
         bentang_raw = row.get("L_mm", row.get("bentang_bersih_mm"))
+        # 13-SPEC §2: L2_mm — dimensi kedua (plat)
+        l2_raw = row.get("L2_mm", 0)
         jumlah_raw = row.get("jumlah")
         lokasi = str(row.get("lokasi", "")).strip()
         if not tipe:
@@ -66,6 +68,11 @@ def _baca_elemen_json(rows) -> list[ElemenInput]:
                           f"positif: {bentang}")
             continue
         try:
+            l2 = int(l2_raw) if l2_raw not in (None, "") else 0
+        except (TypeError, ValueError):
+            errors.append(f"Baris {idx}: L2_mm tidak valid: {l2_raw!r}")
+            continue
+        try:
             jumlah = int(jumlah_raw)
         except (TypeError, ValueError):
             errors.append(f"Baris {idx}: jumlah tidak valid: {jumlah_raw!r}")
@@ -74,7 +81,7 @@ def _baca_elemen_json(rows) -> list[ElemenInput]:
             errors.append(f"Baris {idx}: jumlah harus positif: {jumlah}")
             continue
         elemen.append(ElemenInput(tipe=tipe, bentang_bersih_mm=bentang,
-                                  jumlah=jumlah, lokasi=lokasi))
+                                  jumlah=jumlah, lokasi=lokasi, L2_mm=l2))
     return elemen, errors
 
 
@@ -1084,6 +1091,13 @@ def api_hitung():
     elemen, errors = _baca_elemen_json(rows)
     if errors:
         return jsonify({"ok": False, "error": "\n".join(errors)}), 400
+    # 13-SPEC §2: plat wajib punya L2_mm
+    for i, el in enumerate(elemen, 1):
+        if templates.get(el.tipe, None) is not None and \
+                templates[el.tipe].tipe == "plat" and not el.L2_mm:
+            return jsonify({"ok": False,
+                            "error": f"Baris {i}: tipe 'plat' wajib diisi "
+                                     f"L2_mm (dimensi kedua)."}), 400
 
     try:
         cfg_efektif = _apply_override(cfg, override)
@@ -1156,6 +1170,13 @@ def api_export():
     elemen, errors = _baca_elemen_json(rows)
     if errors:
         return jsonify({"ok": False, "error": "\n".join(errors)}), 400
+    # 13-SPEC §2: plat wajib punya L2_mm
+    for i, el in enumerate(elemen, 1):
+        if templates.get(el.tipe, None) is not None and \
+                templates[el.tipe].tipe == "plat" and not el.L2_mm:
+            return jsonify({"ok": False,
+                            "error": f"Baris {i}: tipe 'plat' wajib diisi "
+                                     f"L2_mm (dimensi kedua)."}), 400
     try:
         cfg_efektif = _apply_override(cfg, override)
         cuts, agg, hasil_opt = _hitung(cfg_efektif, templates, elemen,

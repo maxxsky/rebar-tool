@@ -16,8 +16,9 @@ import yaml
 from models import (ConfigError, ShapeBengkokan, ShapeDef, ShapeHook,
                     ShapeSegmen)
 
-# 10-SPEC §3.1 + 12-SPEC §3.2 — whitelist tertutup
-ALLOWED_VARS = {"L", "H", "b", "h", "c", "Ld", "d", "tekuk", "stek"}
+# 10-SPEC §3.1 + 12-SPEC §3.2 + 13-SPEC §2 — whitelist tertutup
+ALLOWED_VARS = {"L", "L2", "Lx", "Ly", "H", "b", "h", "c", "Ld", "d",
+                "tekuk", "stek", "t"}
 ALLOWED_FUNCS = {"max", "min"}   # 12-SPEC §4.1 — hanya dua ini
 
 

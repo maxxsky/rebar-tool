@@ -51,6 +51,13 @@ class InfeasiblePatternError(Exception):
 
 
 @dataclass(frozen=True)
+class PlatConfig:
+    """Config plat (13-SPEC §3) — konvensi jumlah dari jarak."""
+    jarak_tepi_mm: int = 50              # dari gambar (bukan konstanta)
+    metode_hitung: str = "floor_plus_1"  # "floor_plus_1" | "ceil"
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     """Config proyek — immutable setelah load. Frozen disengaja.
 
@@ -76,6 +83,7 @@ class ProjectConfig:
     shapes: dict = field(default_factory=dict)  # 10-SPEC: {kode: ShapeDef}
     lap_metode: str = "sisa_di_ujung"  # 11-SPEC §3: sisa_di_ujung | bagi_rata | berselang
     lap_berselang_offset_mm: int = 0  # 11-SPEC §3.3 — hanya utk metode berselang
+    plat_cfg: PlatConfig = field(default_factory=PlatConfig)  # 13-SPEC §3
     warnings: list = field(default_factory=list)
 
 
@@ -120,6 +128,9 @@ class TemplateTulangan:
     shape: str = "01"     # 10-SPEC §5 — default batang lurus
     vars: dict = field(default_factory=dict)
     zona_sambung_terlarang: tuple = ()   # 11-SPEC §4 — [(dari, sampai)] rasio bentang
+    arah: str = ""        # 13-SPEC §3.1 — "X" | "Y" (plat): sumber panjang & jumlah
+    jarak_mm: int = 0     # 13-SPEC §3.1 — spasi antar batang (plat); 0 = pakai jumlah
+    zona: int = 1         # 13-SPEC §4 — 2 = dua sisi tumpuan (jumlah ×2)
 
 
 @dataclass(frozen=True)
@@ -159,6 +170,7 @@ class ElemenInput:
     bentang_bersih_mm: int
     jumlah: int
     lokasi: str = ""
+    L2_mm: int = 0        # 13-SPEC §2 — dimensi kedua, hanya untuk plat
 
 
 # ── Cutting stock (F1) ──────────────────────────────────────

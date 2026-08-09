@@ -69,8 +69,9 @@ def panjang_potong(shape, vars_, dia, hook_sudut, cfg, elemen="balok",
     """
     from shapes import evaluasi_ekspresi
 
-    # variabel dasar (10-SPEC §3.1 + 12-SPEC §3.2) — L/H = dimensi utama
+    # variabel dasar (10-SPEC §3.1 + 12/13-SPEC) — L/H/Lx/Ly = dimensi utama
     L_val = bentang if bentang is not None else 0
+    L2_val = vars_.get("L2_mm", 0)
     v = {
         "b": vars_.get("b_mm", 0),
         "h": vars_.get("h_mm", 0),
@@ -79,6 +80,10 @@ def panjang_potong(shape, vars_, dia, hook_sudut, cfg, elemen="balok",
         "Ld": cfg.ld.get(dia, 0),
         "L": L_val,
         "H": L_val,
+        "L2": L2_val,
+        "Lx": L_val,
+        "Ly": L2_val,
+        "t": vars_.get("t_mm", 0),
         "stek": 0,
     }
     # vars_ dari template: angka langsung, atau ekspresi yang di-resolve
@@ -208,8 +213,8 @@ def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectCon
                             meta) -> list[Cut]:
     """Tulangan dengan shape dari template (default '01' batang lurus).
 
-    Kalau panjang > stok → pecah dgn lap splice (11-SPEC). Return LIST —
-    beberapa Cut kalau tersambung, satu Cut kalau tidak.
+    Plat (13-SPEC §3): jumlah dari jarak_mm, panjang dari arah (X/Y).
+    Kalau panjang > stok → pecah dgn lap splice (11-SPEC). Return LIST.
     """
     shape_kode = getattr(tul, 'shape', None) or '01'
     shape = _get_shape(cfg, shape_kode, f"template '{meta.tipe_elemen}'")
@@ -219,15 +224,28 @@ def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectCon
     if not vars_:
         n_ujung = 2 if getattr(tul, 'tumpuan_kedua_ujung', True) else 1
         vars_ = {"L": f"L + {n_ujung}*Ld"}
-    vars_ = {**vars_, "b_mm": meta.b_mm, "h_mm": meta.h_mm}
+    vars_ = {**vars_, "b_mm": meta.b_mm, "h_mm": meta.h_mm,
+             "L2_mm": meta.L2_mm}
     panjang, segmen = panjang_potong(shape, vars_, tul.dia, None, cfg,
                                      elemen=meta.tipe_elemen, bentang=bentang)
     S = cfg.stok.panjang_batang_mm
 
+    # 13-SPEC §3/§4: plat — jumlah dari jarak_mm × zona
+    jumlah_batang = getattr(tul, 'jumlah', 0)
+    jarak_mm = getattr(tul, 'jarak_mm', 0)
+    if jarak_mm > 0:
+        # arah menentukan dimensi tegak lurus (pembagi jumlah)
+        W = meta.L2_mm if getattr(tul, 'arah', '') == 'X' else bentang
+        jumlah_batang = hitung_jumlah_dari_jarak(W, jarak_mm, cfg)
+        jumlah_batang *= max(1, getattr(tul, 'zona', 1))
+    else:
+        jumlah_batang *= max(1, getattr(tul, 'zona', 1))
+
     if panjang <= S:
         # tanpa sambungan — perilaku identik dengan sebelumnya (11-SPEC §5)
         return [Cut(
-            dia=tul.dia, panjang_mm=panjang, jumlah=tul.jumlah * meta.jumlah_elemen,
+            dia=tul.dia, panjang_mm=panjang,
+            jumlah=jumlah_batang * meta.jumlah_elemen,
             bar_mark=meta.bar_mark, tipe_elemen=meta.tipe_elemen,
             posisi=meta.posisi, shape_code=shape_kode,
             lokasi=meta.lokasi, segmen_mm=segmen)]
@@ -250,12 +268,11 @@ def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectCon
     zona = getattr(tul, 'zona_sambung_terlarang', None) or ()
 
     out: list[Cut] = []
-    for i_b in range(tul.jumlah * meta.jumlah_elemen):
+    for i_b in range(jumlah_batang * meta.jumlah_elemen):
         # berselang: batang ganjil/genap dalam kelompok digeser bergantian
         idx_ganjil = (i_b % 2 == 0)
         pot, pos = potongan_lap_splice(panjang, S, Lp, metode, off, idx_ganjil)
         # 11-SPEC §4: zona sambung terlarang → WARNING, bukan error.
-        # Posisi sambungan = ujung potongan − Lp, diukur dari ujung kiri elemen.
         if zona:
             for p_samb in pos:
                 r = p_samb / panjang if panjang else 0
@@ -280,6 +297,21 @@ def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectCon
                 bagian=(pi + 1, len(pot)),
                 sambungan_di_mm=tuple(pos)))
     return out
+
+
+def hitung_jumlah_dari_jarak(W: int, jarak_mm: int, cfg: ProjectConfig) -> int:
+    """Jumlah batang plat dari spasi (13-SPEC §3).
+
+    n = floor((W − 2×jarak_tepi)/jarak) + 1   (metode default)
+    Konvensi 'ceil' alternatif — owner pilih setelah banding ke BBS asli.
+    """
+    from math import floor
+    tepi = cfg.plat_cfg.jarak_tepi_mm
+    bentang_efektif = max(0, W - 2 * tepi)
+    if cfg.plat_cfg.metode_hitung == "ceil":
+        from math import ceil
+        return max(1, ceil(bentang_efektif / jarak_mm)) if bentang_efektif > 0 else 0
+    return max(1, floor(bentang_efektif / jarak_mm) + 1) if bentang_efektif > 0 else 0
 
 
 # ── sengkang ────────────────────────────────────────────────
@@ -412,22 +444,24 @@ def generate_elemen(tpl: ElementTemplate, elemen: ElemenInput,
         bar_mark = f"{prefix}{tpl.nama}-{tul.posisi[0].upper()}{i + 1}"
         meta = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
                      lokasi=lokasi, bar_mark=bar_mark, posisi=tul.posisi,
-                     b_mm=tpl.b_mm, h_mm=tpl.h_mm)
+                     b_mm=tpl.b_mm, h_mm=tpl.h_mm,
+                     L2_mm=getattr(elemen, 'L2_mm', 0))
         out.extend(generate_tulangan_utama(tul, bentang, cfg, meta))
 
     meta_sk = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
                     lokasi=lokasi, bar_mark=f"{prefix}{tpl.nama}-SK",
-                    posisi="sengkang", b_mm=tpl.b_mm, h_mm=tpl.h_mm)
+                    posisi="sengkang", b_mm=tpl.b_mm, h_mm=tpl.h_mm,
+                    L2_mm=getattr(elemen, 'L2_mm', 0))
     out.extend(generate_sengkang(tpl, bentang, cfg, meta_sk))
     return out
 
 
 class _Meta:
     __slots__ = ("tipe_elemen", "jumlah_elemen", "lokasi", "bar_mark",
-                 "posisi", "b_mm", "h_mm")
+                 "posisi", "b_mm", "h_mm", "L2_mm")
 
     def __init__(self, tipe_elemen, jumlah_elemen, lokasi, bar_mark, posisi,
-                 b_mm=0, h_mm=0):
+                 b_mm=0, h_mm=0, L2_mm=0):
         self.tipe_elemen = tipe_elemen
         self.jumlah_elemen = jumlah_elemen
         self.lokasi = lokasi
@@ -435,6 +469,7 @@ class _Meta:
         self.posisi = posisi
         self.b_mm = b_mm
         self.h_mm = h_mm
+        self.L2_mm = L2_mm
 
 
 # ── generate semua elemen + agregasi ────────────────────────

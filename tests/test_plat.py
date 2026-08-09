@@ -157,7 +157,37 @@ def test_tanpa_jumlah_dan_jarak():
             "sengkang": []})
 
 
-# ── 8. L2 wajib utk plat (via API) ──────────────────────────
+# ── 8. L2 wajib utk plat — generate_bbs LANGSUNG (PATCH-07) ─
+def test_L2_wajib_generate_bbs_langsung():
+    """CLI / generate_bbs tanpa L2 harus ERROR, bukan x0 batang (PATCH-07)."""
+    from config_loader import load_layered, _parse_template
+    c2, _t2, _ = load_layered(CONFIG_DIR / "projects", "PRJ-001", "GS-01")
+    tpl = _parse_template("plat", "SX", {
+        "b_mm": 0, "h_mm": 0,
+        "tulangan": [{"posisi": "bawah arah X", "dia": 10, "arah": "X",
+                      "jarak_mm": 150, "vars": {"L": "Lx + 2*Ld"}}],
+        "sengkang": []})
+    el = ElemenInput(tipe="SX", bentang_bersih_mm=6000, jumlah=1)  # tanpa L2
+    with pytest.raises(ConfigError, match="L2_mm"):
+        generate_elemen(tpl, el, c2)
+
+
+def test_L2_wajib_ekspresi_ly_di_balok():
+    """Balok yg ekspresinya pakai Ly juga butuh L2 — PATCH-07."""
+    from config_loader import load_layered, _parse_template
+    c2, _t2, _ = load_layered(CONFIG_DIR / "projects", "PRJ-001", "GS-01")
+    tpl = _parse_template("balok", "BX", {
+        "b_mm": 300, "h_mm": 600,
+        "tulangan": [{"posisi": "atas", "dia": 19, "jumlah": 4,
+                      "vars": {"L": "Ly + 2*Ld"}}],
+        "sengkang": [{"dia": 10, "jarak_tumpuan_mm": 150,
+                      "jarak_lapangan_mm": 200, "kaki": 2, "hook_sudut": 135}]})
+    el = ElemenInput(tipe="BX", bentang_bersih_mm=6000, jumlah=1)  # tanpa L2
+    with pytest.raises(ConfigError, match="L2_mm"):
+        generate_elemen(tpl, el, c2)
+
+
+# ── 9. L2 wajib utk plat (via API) — pesan nyebut nomor baris ─
 def test_L2_wajib_untuk_plat(client, tmp_path):
     # template S1 ada di PRJ-001? tambah dulu via API biar test mandiri
     import yaml

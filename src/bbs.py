@@ -429,6 +429,28 @@ def generate_sengkang(tpl: ElementTemplate, bentang: int, cfg: ProjectConfig,
 
 
 # ── generate satu elemen ────────────────────────────────────
+def _template_butuh_L2(tpl: ElementTemplate, cfg: ProjectConfig = None) -> bool:
+    """Apakah template ini butuh L2_mm (13-SPEC §2 / PATCH-07).
+
+    Butuh kalau: tipe plat, atau ada ekspresi (vars tulangan / segmen shape
+    yang dipakai tulangan) memakai variabel L2/Ly.
+    """
+    import re
+    if tpl.tipe == "plat":
+        return True
+    pat = re.compile(r"\b(?:L2|Ly)\b")
+    for tul in tpl.tulangan:
+        for v in (tul.vars or {}).values():
+            if isinstance(v, str) and pat.search(v):
+                return True
+        # segmen shape yang dipakai tulangan ini (kalau cfg tersedia)
+        if cfg and (cfg.shapes or {}):
+            sh = (cfg.shapes or {}).get(getattr(tul, 'shape', '01'))
+            if sh and any(pat.search(s.panjang) for s in sh.segmen):
+                return True
+    return False
+
+
 def generate_elemen(tpl: ElementTemplate, elemen: ElemenInput,
                     cfg: ProjectConfig, gambar_kode=None) -> list[Cut]:
     """Semua Cut untuk satu kelompok elemen identik.
@@ -439,6 +461,15 @@ def generate_elemen(tpl: ElementTemplate, elemen: ElemenInput,
     lokasi = elemen.lokasi
     prefix = f"{gambar_kode}/" if gambar_kode else ""
     out: list[Cut] = []
+
+    # PATCH-07: L2 wajib kalau template butuh — di jalur perhitungan (bukan
+    # cuma web layer). Tanpa ini CLI menghasilkan x0 batang / panjang salah
+    # yang kelihatan wajar.
+    if _template_butuh_L2(tpl, cfg) and not getattr(elemen, 'L2_mm', 0):
+        raise ConfigError(
+            f"Tipe '{tpl.nama}' ({tpl.tipe}) butuh dimensi kedua (L2_mm), "
+            f"tapi tidak diisi — lokasi: {lokasi or '(kosong)'}. "
+            f"Isi L2_mm di input elemen.")
 
     for i, tul in enumerate(tpl.tulangan):
         bar_mark = f"{prefix}{tpl.nama}-{tul.posisi[0].upper()}{i + 1}"

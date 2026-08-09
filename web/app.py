@@ -104,7 +104,7 @@ def _apply_override(cfg, override: dict):
              "sisa_min_simpan_mm", "stok", "cover", "ld", "lap",
              "unit_weight", "hook_tail", "bend_factor",
              "koreksi_bend_aktif", "bend_deduction_faktor", "hook_konvensi",
-             "sengkang"}
+             "lap_metode", "lap_berselang_offset_mm", "sengkang"}
     asing = set(override) - KNOWN
     if asing:
         raise ConfigError(
@@ -122,6 +122,8 @@ def _apply_override(cfg, override: dict):
     bend_f = dict(cfg.bend_faktor)
     koreksi = cfg.koreksi_bend_aktif
     konvensi = cfg.hook_konvensi
+    metode = cfg.lap_metode
+    off = cfg.lap_berselang_offset_mm
 
     # ── flat legacy (4 field) ──
     if "metode_hitung" in override:
@@ -176,6 +178,16 @@ def _apply_override(cfg, override: dict):
             raise ConfigError(
                 f"hook_konvensi harus 'tail_terpisah' atau 'hook_total', "
                 f"dapat {konvensi!r}")
+    if "lap_metode" in override:
+        lm = str(override["lap_metode"])
+        if lm not in ("sisa_di_ujung", "bagi_rata", "berselang"):
+            raise ConfigError(
+                f"lap_metode harus 'sisa_di_ujung', 'bagi_rata', atau "
+                f"'berselang', dapat {lm!r}")
+        metode = lm
+    if "lap_berselang_offset_mm" in override:
+        off = int(_num(override["lap_berselang_offset_mm"],
+                       "lap_berselang_offset_mm"))
     if "sengkang" in override:
         s = override["sengkang"]
         if "zona_tumpuan_faktor" in s:
@@ -195,7 +207,9 @@ def _apply_override(cfg, override: dict):
                                unit_weight=uw, cover=cover, hook_tail=hook_tail,
                                bend_factor=bend, bend_faktor=bend_f,
                                koreksi_bend_aktif=koreksi,
-                               hook_konvensi=konvensi)
+                               hook_konvensi=konvensi,
+                               lap_metode=metode,
+                               lap_berselang_offset_mm=off)
 
 
 def _templates_dict(templates):
@@ -209,7 +223,9 @@ def _templates_dict(templates):
             "tulangan": [{"posisi": x.posisi, "dia": x.dia,
                           "jumlah": x.jumlah,
                           "tumpuan_kedua_ujung": x.tumpuan_kedua_ujung,
-                          "shape": x.shape, "vars": dict(x.vars)}
+                          "shape": x.shape, "vars": dict(x.vars),
+                          "zona_sambung_terlarang": list(
+                              x.zona_sambung_terlarang)}
                          for x in t.tulangan],
             "sengkang": {"dia": t.sengkang.dia,
                          "jarak_tumpuan_mm": t.sengkang.jarak_tumpuan_mm,
@@ -242,6 +258,8 @@ def _config_dict(cfg):
         "jarak_sengkang_pertama_mm": cfg.sengkang_cfg.jarak_sengkang_pertama_mm,
         "koreksi_bend_aktif": cfg.koreksi_bend_aktif,
         "hook_konvensi": cfg.hook_konvensi,
+        "lap_metode": cfg.lap_metode,
+        "lap_berselang_offset_mm": cfg.lap_berselang_offset_mm,
         "unit_weight": {str(k): v for k, v in sorted(cfg.unit_weight.items())},
         "warnings": list(cfg.warnings),
     }
@@ -277,7 +295,49 @@ def _bbs_dict(c, unit_weight=None):
             "panjang_mm": c.panjang_mm, "jumlah": c.jumlah,
             "total_m": round(total_m, 3),
             "berat_kg": round(total_m * (unit_weight or {}).get(c.dia, 0), 2),
+            "bagian": c.bagian,
+            "sambungan_di_mm": list(c.sambungan_di_mm),
             "segmen_mm": list(c.segmen_mm)}
+
+
+def _lap_report(cuts, cfg) -> dict:
+    """Tambahan baja akibat lap splice per diameter (11-SPEC §6).
+
+    Teoretis = panjang elemen tanpa lewatan; total = Σ potongan (termasuk
+    lewatan); % tambahan = (total−teoretis)/teoretis.
+    """
+    import re
+    # kelompokkan per bar_mark dasar (tanpa akhiran a/b) + dia
+    groups: dict[tuple, dict] = {}
+    for c in cuts:
+        if not c.bagian:
+            continue
+        base = re.sub(r"[a-z]+$", "", c.bar_mark)
+        n_pot = c.bagian[1]
+        g = groups.setdefault((base, c.dia),
+                              {"dia": c.dia, "total": 0, "jumlah": 0,
+                               "n_pot": n_pot})
+        g["total"] += c.panjang_mm * c.jumlah
+        g["jumlah"] += c.jumlah
+        g["n_pot"] = max(g["n_pot"], n_pot)
+    out = {}
+    for (base, dia), g in groups.items():
+        Lp = cfg.lap.get(dia, 0)
+        n_pot = max(1, g["n_pot"])
+        # jumlah batang tersambung = jumlah potongan / potongan per batang
+        n_batang = round(g["jumlah"] / n_pot) if n_pot else 0
+        total = g["total"]
+        tambahan = n_batang * (n_pot - 1) * Lp
+        teoretis = total - tambahan
+        pct = (total - teoretis) / teoretis * 100 if teoretis else 0
+        out[dia] = {
+            "teoretis_m": round(teoretis / 1000, 3),
+            "tambahan_m": round(tambahan / 1000, 3),
+            "total_m": round(total / 1000, 3),
+            "pct": round(pct, 1),
+            "batang_tersambung": n_batang,
+        }
+    return out
 
 
 def _hitung(cfg, templates, elemen, gambar_kode=None):
@@ -848,6 +908,8 @@ def _signature_patch02(cfg_d, tpl_d):
         "cover": nd(cfg_d.get("selimut_beton_mm")),
         "ld": nd(cfg_d.get("panjang_penyaluran_mm")),
         "lap": nd(cfg_d.get("lap_splice_mm")),
+        "lap_metode": (cfg_d.get("lap_splice") or {}).get("metode",
+                                                          "sisa_di_ujung"),
         "hook": hook_sig(cfg_d.get("hook")),
         "hook_konvensi": (cfg_d.get("hook") or {}).get("konvensi", "tail_terpisah"),
         "sengkang": {str(k): v for k, v in (cfg_d.get("sengkang") or {}).items()},
@@ -976,6 +1038,8 @@ def _override_diff(cfg_lama, cfg_baru) -> list[str]:
         lines.append(f"koreksi_bengkokan: {cfg_lama.koreksi_bend_aktif} → {cfg_baru.koreksi_bend_aktif}")
     if cfg_lama.hook_konvensi != cfg_baru.hook_konvensi:
         lines.append(f"konvensi hook: {cfg_lama.hook_konvensi} → {cfg_baru.hook_konvensi}")
+    if cfg_lama.lap_metode != cfg_baru.lap_metode:
+        lines.append(f"metode lap splice: {cfg_lama.lap_metode} → {cfg_baru.lap_metode}")
     for s in set(cfg_lama.bend_faktor) | set(cfg_baru.bend_faktor):
         if cfg_lama.bend_faktor.get(s) != cfg_baru.bend_faktor.get(s):
             lines.append(f"bend_deduction_faktor {s}°: "
@@ -1044,6 +1108,7 @@ def api_hitung():
         "override_aktif": list(override.keys()),
         "override_diff": diff,
         "bbs": bbs_rows,
+        "lap_report": _lap_report(cuts, cfg_efektif),
         "optimizer": {str(d): _opt_dict(r, uw) for d, r in
                       sorted(hasil_opt.items())},
         "total": {
@@ -1094,6 +1159,7 @@ def api_export():
         return jsonify({"ok": False, "error": str(e)}), 400
 
     diff = _override_diff(cfg, cfg_efektif)
+    lap_rep = _lap_report(cuts, cfg_efektif)
     out_dir = ROOT / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1104,7 +1170,8 @@ def api_export():
     nama += f"_{ts}.xlsx"
     out_path = out_dir / nama
     generate_excel(cfg_efektif, elemen, cuts, hasil_opt, ROOT / "config",
-                   out_path, override_info=diff, gambar_info=info)
+                   out_path, override_info=diff, gambar_info=info,
+                   lap_report=lap_rep)
     return send_file(out_path, as_attachment=True,
                      download_name=out_path.name)
 

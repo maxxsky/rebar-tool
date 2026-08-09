@@ -72,6 +72,8 @@ class ProjectConfig:
     koreksi_bend_aktif: bool = False  # spec 02 §3.1 — default OFF sampai terverifikasi (F4)
     hook_konvensi: str = "tail_terpisah"  # 09-SPEC §8: "tail_terpisah" | "hook_total"
     shapes: dict = field(default_factory=dict)  # 10-SPEC: {kode: ShapeDef}
+    lap_metode: str = "sisa_di_ujung"  # 11-SPEC §3: sisa_di_ujung | bagi_rata | berselang
+    lap_berselang_offset_mm: int = 0  # 11-SPEC §3.3 — hanya utk metode berselang
     warnings: list = field(default_factory=list)
 
 
@@ -115,6 +117,7 @@ class TemplateTulangan:
     tumpuan_kedua_ujung: bool = True
     shape: str = "01"     # 10-SPEC §5 — default batang lurus
     vars: dict = field(default_factory=dict)
+    zona_sambung_terlarang: tuple = ()   # 11-SPEC §4 — [(dari, sampai)] rasio bentang
 
 
 @dataclass(frozen=True)
@@ -154,7 +157,10 @@ class ElemenInput:
 
 # ── Cutting stock (F1) ──────────────────────────────────────
 class LengthExceedsStockError(Exception):
-    """Panjang potong > batang stok — fail loud, bukan silent truncate (F6)."""
+    """Potongan HASIL PEMECAHAN > batang stok — invariant internal (11-SPEC §8).
+
+    Bukan lagi error untuk panjang total > stok: itu pemicu lap splice.
+    """
 
 
 @dataclass(frozen=True)
@@ -167,12 +173,14 @@ class Cut:
     panjang_mm: int       # panjang potong (sudah termasuk hook & bengkokan)
     jumlah: int
     # metadata untuk traceability & output BBS
-    bar_mark: str = ""    # "B1-A" (tipe - posisi)
+    bar_mark: str = ""    # "B1-A" (tipe - posisi); akhiran a/b utk potongan sambungan
     tipe_elemen: str = "" # "B1"
     posisi: str = ""      # "atas" | "bawah" | "pinggang" | "sengkang"
     shape_code: str = ""  # "01" lurus, "51" sengkang, dst
     lokasi: str = ""      # dari input, bebas teks
     segmen_mm: tuple[int, ...] = ()   # dimensi per segmen, untuk kolom shape
+    bagian: tuple = None              # 11-SPEC §5 — (1, 2) = potongan 1 dari 2
+    sambungan_di_mm: tuple = ()       # 11-SPEC §5 — posisi sambungan dari ujung kiri
 
 
 @dataclass(frozen=True)

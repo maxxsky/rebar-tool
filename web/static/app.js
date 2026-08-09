@@ -381,18 +381,35 @@ function renderBBS(rows, d) {
   let html = `<table><thead><tr>
     <th>Bar Mark</th><th>Lokasi</th><th>Posisi</th><th>Shape</th><th>Ø</th>
     <th class="num">Panjang (m)</th><th class="num">Jumlah</th>
-    <th class="num">Total (m)</th><th class="num">Berat (kg)</th></tr></thead><tbody>`;
+    <th class="num">Total (m)</th><th class="num">Berat (kg)</th>`;
+  // 11-SPEC §10: kolom Bagian (1/2, 2/2) kalau ada sambungan
+  if (rows.some(r => r.bagian)) html += '<th>Bagian</th>';
+  html += '</tr></thead><tbody>';
   rows.forEach(r => {
+    const bagianTxt = r.bagian ? `${r.bagian[0]}/${r.bagian[1]}` : '';
     html += `<tr>
       <td>${escapeHtml(r.bar_mark || '')}</td><td>${escapeHtml(r.lokasi || '')}</td><td>${escapeHtml(r.posisi)}</td>
       <td>${escapeHtml(r.shape)}</td><td>${r.dia}</td>
       <td class="num">${fmtM(r.panjang_mm)}</td><td class="num">${r.jumlah}</td>
       <td class="num">${fmtKg(r.total_m)}</td><td class="num">${fmtKg(r.berat_kg)}</td>
+      ${r.bagian ? `<td>${bagianTxt}</td>` : ''}
     </tr>`;
   });
-  html += `<tr class="total"><td colspan="7">TOTAL</td>
+  const colspan = rows.some(r => r.bagian) ? 8 : 7;
+  html += `<tr class="total"><td colspan="${colspan}">TOTAL</td>
     <td class="num">${fmtKg(totalPanjang)}</td>
     <td class="num">${fmtKg(totalBerat)}</td></tr></tbody></table>`;
+  // 11-SPEC §10: baris ringkas tambahan baja
+  const lr = d.lap_report || {};
+  const dias = Object.keys(lr);
+  if (dias.length) {
+    const totTamb = dias.reduce((a, k) => a + (lr[k].tambahan_m || 0), 0);
+    const totBat = dias.reduce((a, k) => a + (lr[k].batang_tersambung || 0), 0);
+    const pct = dias.reduce((a, k) => a + (lr[k].pct || 0), 0) / dias.length;
+    html += `<div class="lap-note" style="margin-top:8px;font-size:12px;color:var(--tinta2)">
+      <b>${totBat} batang tersambung</b> · tambahan baja ${fmtKg(totTamb)} m
+      (rata-rata ${pct.toFixed(1)}%) — lihat rincian per diameter di bawah</div>`;
+  }
   box.innerHTML = html;
 }
 
@@ -833,6 +850,14 @@ function renderSetupProyek(body) {
     .map(([d, v]) => `D${d}=${v}`).join(' ');
   const lds = Object.entries(c.panjang_penyaluran_mm || {})
     .map(([d, v]) => `D${d}=${v}`).join(' ');
+  const laps = Object.entries(c.lap_splice_mm || {})
+    .map(([d, v]) => `D${d}=${v}`).join(' ');
+  const lapMetode = (c.lap_splice && c.lap_splice.metode) || 'sisa_di_ujung';
+  const lapDesc = {
+    'sisa_di_ujung': 'paling hemat — n−1 potongan stok penuh + satu sisa',
+    'bagi_rata': 'semua potongan sama panjang — lebih mudah dikerjakan',
+    'berselang': 'sambungan digeser bergantian (butuh offset dari gambar)',
+  };
   body.innerHTML = `
     <h2>Proyek — ${esc(c.proyek ? c.proyek.nama : proyekAktif)}</h2>
     <div class="sub">Nilai di halaman ini berlaku untuk semua gambar yang tidak punya nilai sendiri.</div>
@@ -840,7 +865,8 @@ function renderSetupProyek(body) {
       <b>${esc(proyekAktif)}</b> · stok ${c.stok ? c.stok.panjang_batang_mm : '—'} mm ·
       kerf ${c.stok ? c.stok.kerf_mm : '—'} mm · sisa min ${c.stok ? c.stok.sisa_min_simpan_mm : '—'} mm<br>
       <small>unit weight: ${uw || '—'}</small><br>
-      <small>Ld default: ${lds || '—'}</small>
+      <small>Ld default: ${lds || '—'}</small><br>
+      <small>lap splice: ${laps || '—'} · metode <b>${lapMetode}</b> — ${lapDesc[lapMetode] || ''}</small>
     </div>
     <div class="aksi">
       <button class="btn kecil" onclick="bukaEditorParam()">Edit parameter proyek</button>
@@ -1416,6 +1442,17 @@ function bukaEditorParam() {
       <div class="wiz-field"><label>Metode</label>
         <select id="pMetode"><option value="kontinyu" ${c.sengkang.metode_hitung === 'kontinyu' ? 'selected' : ''}>kontinyu</option>
         <option value="per_zona" ${c.sengkang.metode_hitung === 'per_zona' ? 'selected' : ''}>per_zona</option></select></div>
+    </div>
+    <div class="wiz-grid">
+      <div class="wiz-field"><label>Metode lap splice</label>
+        <select id="pLapMetode">
+          <option value="sisa_di_ujung" ${(c.lap_splice && c.lap_splice.metode) === 'sisa_di_ujung' ? 'selected' : ''}>sisa_di_ujung — hemat, n−1 stok penuh + sisa</option>
+          <option value="bagi_rata" ${(c.lap_splice && c.lap_splice.metode) === 'bagi_rata' ? 'selected' : ''}>bagi_rata — semua sama panjang</option>
+          <option value="berselang" ${(c.lap_splice && c.lap_splice.metode) === 'berselang' ? 'selected' : ''}>berselang — sambungan digeser</option>
+        </select></div>
+      <div class="wiz-field"><label>Offset berselang (mm)</label>
+        <input id="pLapOffset" type="number" min="0" value="${(c.lap_splice && c.lap_splice.berselang_offset_mm) || 0}">
+        <div class="wiz-hint">Hanya utk metode berselang — isi dari gambar.</div></div>
     </div>`;
 }
 function paramModalClose() { $('paramModal').style.display = 'none'; }
@@ -1457,6 +1494,10 @@ async function paramSave() {
   c.sengkang.zona_tumpuan_faktor = +$('pZona').value;
   c.sengkang.jarak_sengkang_pertama_mm = +$('pPertama').value;
   c.sengkang.metode_hitung = $('pMetode').value;
+  // 11-SPEC §3: metode lap splice + offset berselang
+  c.lap_splice = c.lap_splice || {};
+  c.lap_splice.metode = $('pLapMetode').value;
+  c.lap_splice.berselang_offset_mm = +$('pLapOffset').value || 0;
 
   // revisi wajib kalau nilai teknis proyek berubah
   const sig = (x) => JSON.stringify(x);

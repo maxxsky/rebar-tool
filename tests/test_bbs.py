@@ -77,21 +77,28 @@ def test_kasus_c_tulangan_utama(cfg):
     tul = types.SimpleNamespace(dia=19, jumlah=4, tumpuan_kedua_ujung=True)
     meta = _Meta(tipe_elemen="B1", jumlah_elemen=1, lokasi="", bar_mark="B1-A",
                  posisi="atas")
-    cut = generate_tulangan_utama(tul, 6000, cfg, meta)
+    # 11-SPEC: generate_tulangan_utama return LIST (bisa >1 utk sambungan)
+    cuts = generate_tulangan_utama(tul, 6000, cfg, meta)
+    assert len(cuts) == 1
+    cut = cuts[0]
     assert cut.panjang_mm == 6000 + 2 * 760
     assert cut.jumlah == 4
     assert cut.shape_code == "01"
+    assert cut.bagian is None           # tanpa sambungan — perilaku identik
 
 
-# ── Kasus D — error path ───────────────────────────────────
-def test_kasus_d_error_melebihi_stok(cfg):
+# ── Kasus D — panjang > stok → lap splice, bukan error (11-SPEC §8) ──
+def test_kasus_d_lap_splice_melebihi_stok(cfg):
     import types
     from bbs import _Meta
     tul = types.SimpleNamespace(dia=19, jumlah=1, tumpuan_kedua_ujung=True)
     meta = _Meta(tipe_elemen="B1", jumlah_elemen=1, lokasi="", bar_mark="B1-A",
                  posisi="atas")
-    with pytest.raises(LengthExceedsStockError):
-        generate_tulangan_utama(tul, 11000, cfg, meta)  # 12520 > 12000
+    # 12520 > 12000 → pecah jadi 2 potongan (bukan error)
+    cuts = generate_tulangan_utama(tul, 11000, cfg, meta)
+    assert len(cuts) == 2
+    assert all(c.panjang_mm <= cfg.stok.panjang_batang_mm for c in cuts)
+    assert cuts[0].bagian == (1, 2) and cuts[1].bagian == (2, 2)
 
 
 # ── Kasus E — konservasi jumlah ────────────────────────────

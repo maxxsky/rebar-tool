@@ -71,6 +71,13 @@ hook:
     135: 3
     180: 4
 
+# ── lap splice (11-SPEC §3) ───────────────────────────────
+# metode: sisa_di_ujung (hemat, n−1 stok penuh + sisa) | bagi_rata |
+# berselang (sambungan digeser — offset dari gambar)
+lap_splice:
+  metode: "sisa_di_ujung"
+  berselang_offset_mm: 0
+
 # ── Unit weight (kg/m) ────────────────────────────────────
 # Konstanta fisik, boleh default tapi tetap override-able
 unit_weight_kg_per_m:

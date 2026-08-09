@@ -189,6 +189,22 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         batasi = False
     optimizer_cfg = OptimizerConfig(max_pola=max_pola, batasi_pola=False)
 
+    # ── lap splice metode (11-SPEC §3) ──
+    lap_raw = data.get("lap_splice") or {}
+    lap_metode = str(lap_raw.get("metode", "sisa_di_ujung"))
+    if lap_metode not in ("sisa_di_ujung", "bagi_rata", "berselang"):
+        errors.append(
+            f"lap_splice.metode harus 'sisa_di_ujung', 'bagi_rata', atau "
+            f"'berselang', dapat {lap_metode!r}")
+        lap_metode = "sisa_di_ujung"
+    try:
+        lap_offset = _norm_int(lap_raw.get("berselang_offset_mm", 0),
+                               "berselang_offset_mm", "lap_splice",
+                               allow_zero=True)
+    except ConfigError as e:
+        errors.append(str(e))
+        lap_offset = 0
+
     # ── koreksi bengkokan (spec 02 §3.1) — default OFF ──
     koreksi_bend = hook_raw.get("koreksi_bengkokan_aktif", False)
     if not isinstance(koreksi_bend, bool):
@@ -218,7 +234,8 @@ def _parse_project(data, errors, warnings) -> ProjectConfig:
         ld=ld, lap=lap, hook_tail=hook_tail, bend_factor=bend_factor,
         bend_faktor=bend_faktor, unit_weight=uw, sengkang_cfg=sengkang_cfg,
         warnings=warnings, optimizer=optimizer_cfg,
-        koreksi_bend_aktif=koreksi_bend, hook_konvensi=hook_konvensi)
+        koreksi_bend_aktif=koreksi_bend, hook_konvensi=hook_konvensi,
+        lap_metode=lap_metode, lap_berselang_offset_mm=lap_offset)
 
 
 def _load_dia_dict(raw, path, errors) -> dict:
@@ -301,10 +318,19 @@ def _parse_template(tipe, nama, tpl) -> ElementTemplate:
             n_ujung = 2 if t.get("tumpuan_kedua_ujung", True) else 1
             vars_ = {"L": f"L + {n_ujung}*Ld"}
         vars_ = dict(vars_)
+        # 11-SPEC §4: zona sambung terlarang — [(dari, sampai)] rasio bentang
+        zona = []
+        for z in (t.get("zona_sambung_terlarang") or []):
+            try:
+                zona.append((float(z.get("dari")), float(z.get("sampai"))))
+            except (TypeError, ValueError, AttributeError):
+                raise ConfigError(
+                    f"{path}.zona_sambung_terlarang: tiap zona harus "
+                    f"{{dari, sampai}} rasio (0-1)")
         tulangan.append(TemplateTulangan(
             posisi=posisi, dia=dia, jumlah=jumlah,
             tumpuan_kedua_ujung=bool(t.get("tumpuan_kedua_ujung", True)),
-            shape=shape, vars=vars_))
+            shape=shape, vars=vars_, zona_sambung_terlarang=tuple(zona)))
 
     sk = tpl.get("sengkang")
     if sk is None:
@@ -499,6 +525,8 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
                      "jarak_sengkang_pertama_mm":
                          cfg.sengkang_cfg.jarak_sengkang_pertama_mm,
                      "metode_hitung": cfg.sengkang_cfg.metode_hitung},
+        "lap_splice": {"metode": cfg.lap_metode,
+                       "berselang_offset_mm": cfg.lap_berselang_offset_mm},
     }
     merged = _deep_merge_dict(cfg_d, ovr)
 
@@ -535,6 +563,11 @@ def resolve_config(cfg: ProjectConfig, drawing_override: dict) -> ProjectConfig:
         stok=StockConfig(panjang_batang_mm=int(merged["stok"]["panjang_batang_mm"]),
                          kerf_mm=int(merged["stok"]["kerf_mm"]),
                          sisa_min_simpan_mm=int(merged["stok"]["sisa_min_simpan_mm"])),
+        lap_metode=str((merged.get("lap_splice") or {}).get("metode",
+                                                            cfg.lap_metode)),
+        lap_berselang_offset_mm=int(
+            (merged.get("lap_splice") or {}).get("berselang_offset_mm",
+                                                 cfg.lap_berselang_offset_mm)),
     )
 
 

@@ -25,7 +25,10 @@ lap_splice_mm:
   '16': 830
   '19': 990
   '22': 1140
-  '25': 1300
+  '25': 1280
+lap_splice:
+  metode: "sisa_di_ujung"
+  berselang_offset_mm: 0
 optimizer:
   batasi_pola: false
   max_pola: 8

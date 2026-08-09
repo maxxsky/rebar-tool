@@ -136,10 +136,73 @@ def _get_shape(cfg, kode, pemakai):
     return shape
 
 
+# ── lap splice (11-SPEC F6) ─────────────────────────────────
+def hitung_jumlah_potongan(L: int, S: int, Lp: int) -> int:
+    """Jumlah potongan batang utk panjang total L.
+
+    n × S − (n−1) × Lp ≥ L  →  n = ceil((L − Lp) / (S − Lp))
+    """
+    if S <= Lp:
+        raise ConfigError(
+            f"Panjang lewatan {Lp} mm tidak boleh ≥ panjang stok {S} mm. "
+            f"Cek config lap_splice_mm — nilai salah.")
+    if L <= S:
+        return 1
+    from math import ceil
+    n = ceil((L - Lp) / (S - Lp))
+    return max(1, n)
+
+
+def potongan_lap_splice(L: int, S: int, Lp: int, metode: str,
+                        offset_mm: int = 0, idx_ganjil: bool = True):
+    """Pembagian panjang total L menjadi potongan ≤ S dengan lewatan Lp.
+
+    metode: "sisa_di_ujung" | "bagi_rata" | "berselang".
+    Return (panjang_potongan_list, sambungan_di_mm_list).
+    idx_ganjil: utk berselang — batang ganjil vs genap digeser beda.
+    """
+    n = hitung_jumlah_potongan(L, S, Lp)
+    if n == 1:
+        return [L], []
+    total_baja = L + (n - 1) * Lp
+    if metode == "bagi_rata":
+        p = total_baja // n
+        sisa = total_baja % n
+        pot = [p + 1] * sisa + [p] * (n - sisa)
+        pos = []
+        acc = 0
+        for x in pot[:-1]:
+            acc += x
+            pos.append(acc - Lp)
+        return pot, pos
+    if metode == "berselang":
+        # struktur disiapkan (11-SPEC §3.3): batang ganjil & genap beda offset
+        off = offset_mm if idx_ganjil else -offset_mm
+        pot = [S - off] * (n - 1) + [total_baja - (n - 1) * (S - off)]
+        pos = []
+        acc = 0
+        for x in pot[:-1]:
+            acc += x
+            pos.append(acc - Lp)
+        return pot, pos
+    # sisa_di_ujung (default): n−1 potongan stok penuh + satu sisa
+    pot = [S] * (n - 1) + [total_baja - (n - 1) * S]
+    pos = []
+    acc = 0
+    for x in pot[:-1]:
+        acc += x
+        pos.append(acc - Lp)
+    return pot, pos
+
+
 # ── tulangan utama ──────────────────────────────────────────
 def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectConfig,
-                            meta) -> Cut:
-    """Tulangan dengan shape dari template (default '01' batang lurus)."""
+                            meta) -> list[Cut]:
+    """Tulangan dengan shape dari template (default '01' batang lurus).
+
+    Kalau panjang > stok → pecah dgn lap splice (11-SPEC). Return LIST —
+    beberapa Cut kalau tersambung, satu Cut kalau tidak.
+    """
     shape_kode = getattr(tul, 'shape', None) or '01'
     shape = _get_shape(cfg, shape_kode, f"template '{meta.tipe_elemen}'")
     # vars dari template; jalur legacy (SimpleNamespace tanpa vars) →
@@ -151,17 +214,64 @@ def generate_tulangan_utama(tul: TemplateTulangan, bentang: int, cfg: ProjectCon
     vars_ = {**vars_, "b_mm": meta.b_mm, "h_mm": meta.h_mm}
     panjang, segmen = panjang_potong(shape, vars_, tul.dia, None, cfg,
                                      elemen=meta.tipe_elemen, bentang=bentang)
+    S = cfg.stok.panjang_batang_mm
 
-    if panjang > cfg.stok.panjang_batang_mm:
-        raise LengthExceedsStockError(
-            f"{meta.bar_mark}: panjang potong {panjang} mm melebihi batang stok "
-            f"{cfg.stok.panjang_batang_mm} mm. Lap splice belum diimplementasi (F6).")
+    if panjang <= S:
+        # tanpa sambungan — perilaku identik dengan sebelumnya (11-SPEC §5)
+        return [Cut(
+            dia=tul.dia, panjang_mm=panjang, jumlah=tul.jumlah * meta.jumlah_elemen,
+            bar_mark=meta.bar_mark, tipe_elemen=meta.tipe_elemen,
+            posisi=meta.posisi, shape_code=shape_kode,
+            lokasi=meta.lokasi, segmen_mm=segmen)]
 
-    return Cut(
-        dia=tul.dia, panjang_mm=panjang, jumlah=tul.jumlah * meta.jumlah_elemen,
-        bar_mark=meta.bar_mark, tipe_elemen=meta.tipe_elemen,
-        posisi=meta.posisi, shape_code=shape_kode,
-        lokasi=meta.lokasi, segmen_mm=segmen)
+    # ── lap splice ──
+    Lp = cfg.lap.get(tul.dia)
+    if not Lp:
+        raise ConfigError(
+            f"{meta.bar_mark}: panjang {panjang} mm melebihi stok {S} mm, "
+            f"butuh lap splice, tapi lap_splice_mm utk D{tul.dia} tidak ada "
+            f"di config. Isi panjang lewatan (dari gambar).")
+    n = hitung_jumlah_potongan(panjang, S, Lp)
+    if n > 5:
+        cfg.warnings.append(
+            f"WARNING: {meta.bar_mark} D{tul.dia} butuh {n} potongan "
+            f"(L={panjang} mm) — biasanya input panjang keliru.")
+
+    metode = getattr(cfg, 'lap_metode', 'sisa_di_ujung')
+    off = getattr(cfg, 'lap_berselang_offset_mm', 0)
+    zona = getattr(tul, 'zona_sambung_terlarang', None) or ()
+
+    out: list[Cut] = []
+    for i_b in range(tul.jumlah * meta.jumlah_elemen):
+        # berselang: batang ganjil/genap dalam kelompok digeser bergantian
+        idx_ganjil = (i_b % 2 == 0)
+        pot, pos = potongan_lap_splice(panjang, S, Lp, metode, off, idx_ganjil)
+        # 11-SPEC §4: zona sambung terlarang → WARNING, bukan error.
+        # Posisi sambungan = ujung potongan − Lp, diukur dari ujung kiri elemen.
+        if zona:
+            for p_samb in pos:
+                r = p_samb / panjang if panjang else 0
+                for (dari, sampai) in zona:
+                    if dari <= r <= sampai:
+                        cfg.warnings.append(
+                            f"WARNING: {meta.bar_mark} sambungan jatuh di "
+                            f"zona terlarang ({r:.2f}×bentang, dalam "
+                            f"{dari}-{sampai}). Cek persetujuan perencana.")
+        for pi, p in enumerate(pot):
+            if p > S:
+                raise LengthExceedsStockError(
+                    f"BUG INTERNAL: potongan {p} mm > stok {S} mm (lap splice).")
+            akhiran = chr(97 + pi)   # a, b, c, ...
+            out.append(Cut(
+                dia=tul.dia, panjang_mm=p,
+                jumlah=1,
+                bar_mark=f"{meta.bar_mark}{akhiran}",
+                tipe_elemen=meta.tipe_elemen, posisi=meta.posisi,
+                shape_code=shape_kode, lokasi=meta.lokasi,
+                segmen_mm=(p,),
+                bagian=(pi + 1, len(pot)),
+                sambungan_di_mm=tuple(pos)))
+    return out
 
 
 # ── sengkang ────────────────────────────────────────────────
@@ -265,7 +375,7 @@ def generate_elemen(tpl: ElementTemplate, elemen: ElemenInput,
         meta = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
                      lokasi=lokasi, bar_mark=bar_mark, posisi=tul.posisi,
                      b_mm=tpl.b_mm, h_mm=tpl.h_mm)
-        out.append(generate_tulangan_utama(tul, bentang, cfg, meta))
+        out.extend(generate_tulangan_utama(tul, bentang, cfg, meta))
 
     meta_sk = _Meta(tipe_elemen=tpl.nama, jumlah_elemen=elemen.jumlah,
                     lokasi=lokasi, bar_mark=f"{prefix}{tpl.nama}-SK",
@@ -324,6 +434,7 @@ def agregasi(cuts: list[Cut]) -> list[Cut]:
                 "bar_marks": [], "posisi": c.posisi, "lokasi": c.lokasi,
                 "shape": c.shape_code, "segmen": c.segmen_mm,
                 "tipe": c.tipe_elemen,
+                "bagian": c.bagian, "sambungan_di_mm": c.sambungan_di_mm,
             }
         g = groups[key]
         g["jumlah"] += c.jumlah
@@ -336,5 +447,6 @@ def agregasi(cuts: list[Cut]) -> list[Cut]:
             dia=g["dia"], panjang_mm=g["panjang"], jumlah=g["jumlah"],
             bar_mark=",".join(g["bar_marks"]), tipe_elemen=g["tipe"],
             posisi=g["posisi"], shape_code=g["shape"], lokasi=g["lokasi"],
-            segmen_mm=g["segmen"]))
+            segmen_mm=g["segmen"], bagian=g["bagian"],
+            sambungan_di_mm=g["sambungan_di_mm"]))
     return sorted(out, key=lambda c: (c.dia, -c.panjang_mm))

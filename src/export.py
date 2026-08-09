@@ -80,7 +80,8 @@ def _agregat_berat_per_dia(cuts, cfg):
 
 def generate_excel(cfg: ProjectConfig, elemen_list, cuts_bbs,
                    hasil_opt: dict[int, OptimizeResult], config_dir: Path,
-                   out_path: Path, override_info=None, gambar_info=None) -> Path:
+                   out_path: Path, override_info=None, gambar_info=None,
+                   lap_report=None) -> Path:
     """cuts_bbs = daftar Cut dari generate_bbs (per bar mark, sebelum agregasi).
     override_info: list[str] perubahan config akibat 'Pakai sekali' — ditulis
     sebagai peringatan di header tiap sheet (PATCH-02 §1.3).
@@ -278,6 +279,27 @@ def generate_excel(cfg: ProjectConfig, elemen_list, cuts_bbs,
         ws3.cell(r, 4, res.waste_pct_tanpa_batasi)
         ws3.cell(r, 5, res.waste_pct)
         ws3.cell(r, 6, "")
+        r += 1
+    r += 1
+
+    # D. Tambahan lap splice (11-SPEC §6) — kalo ada sambungan
+    if lap_report:
+        ws3.cell(r, 1, "D. Tambahan Lap Splice").font = Font(bold=True, size=11)
+        r += 1
+        for i, h in enumerate(["Diameter", "Baja teoretis (m)",
+                               "Tambahan lap (m)", "Total (m)",
+                               "% tambahan"], 1):
+            ws3.cell(r, i, h).fill = HDR_FILL
+            ws3.cell(r, i).font = HDR_FONT
+        r += 1
+        for dia in sorted(lap_report, key=int):
+            lr = lap_report[dia]
+            ws3.cell(r, 1, f"D{dia}")
+            ws3.cell(r, 2, lr["teoretis_m"])
+            ws3.cell(r, 3, lr["tambahan_m"])
+            ws3.cell(r, 4, lr["total_m"])
+            ws3.cell(r, 5, lr["pct"])
+            r += 1
         r += 1
 
     # ── Sheet 4: LOG ───────────────────────────────────────
